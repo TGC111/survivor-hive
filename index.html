@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.51.3
+   幸存者 · 极简版  v0.51.4
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -4799,21 +4799,34 @@ function updateHazards(dt) {
     if (h.kind === 'ring' && h.maxR > 0 && h.r >= h.maxR) { S.hazards.splice(i, 1); continue; }
     if (S.t - h.born < h.warm) continue;
 
-    /* 沙暴：把你顺着风推出去（快慢变化走位），收缩圈就是摔落倒计时。
-       0.50.1：第一个活跃帧判定「卷没卷上」——预警结束时人不在圈里就整招落空 */
+    /* 沙暴（0.51.4 直线风道）：风从 BOSS 中心沿锁定方向吹出一条直向走廊。
+       风起后每帧判「人在不在走廊里」——在就被卷上天顺风推、摔落结算；
+       垂直于风向跨出去即躲开，风空刮后自然散掉。预警期在上面 warm 处已 continue，不判定 */
     if (h.kind === 'sand') {
-      if (h.grab === null) {
-        h.grab = Math.hypot(p.x - h.x, p.y - h.y) <= h.r + 6;
-        if (!h.grab) { h.slamDmg = 0; h.life = Math.min(h.life, .45); }   /* 落空：龙卷快速散掉 */
+      if (h.grab !== true && h.lane) {
+        const L = h.lane, dx = p.x - L.sx, dy = p.y - L.sy;
+        const proj = dx * L.ux + dy * L.uy;                 /* 沿风道走了多远 */
+        const side = Math.abs(dx * -L.uy + dy * L.ux);      /* 偏离中线多少 */
+        if (proj >= -6 && proj <= L.len && side <= L.hw + 4) {
+          h.grab = true;
+          h.slamDmg = h.slam0 || 30;
+          h.life = Math.max(h.life, 1.5); h.life0 = 1.5;    /* 摔落倒计时从抓起那一刻起算 */
+          addRing(p.x, p.y, '#d8b078', 16, 240, .3);
+        }
       }
-      if (!h.grab) {
-        if (Math.random() < .6) addPart(h.x + rnd(-70, 70), h.y + rnd(-70, 70), '#d8b078', 160, 2.5);
+      if (h.grab !== true) {
+        h.slamDmg = 0;   /* 风散了都没卷到人 → 整招落空 */
+        /* 走廊里的流沙粒子：风从哪吹、吹多宽，全程看得见 */
+        if (h.lane && Math.random() < .8) {
+          const L = h.lane, d = rnd(0, L.len), off = rnd(-L.hw + 8, L.hw - 8);
+          addPart(L.sx + L.ux * d - L.uy * off, L.sy + L.uy * d + L.ux * off, '#d8b078', 260, 2.5);
+        }
         continue;
       }
       p.x = clamp(p.x + (h.wx || 0) * dt, p.r, WORLD.w - p.r);
       p.y = clamp(p.y + (h.wy || 0) * dt, p.r, WORLD.h - p.r);
       S.pLift = 12 + Math.sin(S.t * 11) * 3;   /* 悬空：本体提起来，影子留在地上 */
-      /* 风从 BOSS 那边刮过来：粒子在上游生成、顺风吹过玩家（0.50.1 加密一倍） */
+      /* 风从 BOSS 那边刮过来：粒子在上游生成、顺风吹过玩家 */
       const wl = Math.hypot(h.wx || 0, h.wy || 0) || 1;
       if (Math.random() < .95) {
         const qx = p.x - h.wx / wl * rnd(40, 130) + rnd(-40, 40);
@@ -5403,18 +5416,29 @@ const ATK = {
     S.shake = Math.min(10, S.shake + 4);
     SFX.alarm();
   },
-  /* 沙暴吹起摔落（0.50.1 可躲重做）：出手不再秒卷——先亮 0.55 秒预警圈（收缩圈照旧），
-     预警结束时人还在圈里才会被卷上天；提前跑出去就是空的，龙卷自己散掉 */
+  /* 沙暴吹起摔落（0.51.4 直线风道重做）：风从 BOSS 中心沿「出手瞬间锁定的方向」
+     吹出一条直向风道（长 560 / 半宽 78）。0.55 秒预警只画走廊虚线轮廓、不判定——
+     风向一眼可读，垂直于风向跨一步就出。风起后持续 1.45 秒，人在走廊里每帧判定：
+     卷上天 → 顺风推 → 摔落结算。不再是套在脚下的必中圈 */
   sandstorm(e, ph) {
     const p = S.player;
-    const a = Math.atan2(p.y - e.y, p.x - e.x);
-    const h = addHazard('sand', p.x, p.y, { r: 120, dps: 0, color: '#d8b078', life: 2.05, warm: .55 });
-    h.wx = Math.cos(a) * 165; h.wy = Math.sin(a) * 165;   /* 顺着风被推走 */
-    h.slamDmg = 26 + ph * 4;
-    h.life0 = h.life;                                     /* 绘制层用：收缩圈的进度 */
-    h.grab = null;                                        /* null=还没判定；true=卷上了；false=躲开了 */
-    addRing(p.x, p.y, '#d8b078', 20, 300, .55);
-    for (let k = 0; k < 22; k++) addPart(p.x + rnd(-60, 60), p.y + rnd(-60, 60), '#d8b078', 220, 3);
+    const a = Math.atan2(p.y - e.y, p.x - e.x);          /* 锁方向不锁人：出手瞬间定风向 */
+    const ux = Math.cos(a), uy = Math.sin(a);
+    const LEN = 560, HW = 78;                            /* 风道长 / 半宽 */
+    const h = addHazard('sand', e.x + ux * 40, e.y + uy * 40,
+      { r: 0, dps: 0, color: '#d8b078', life: .55 + 1.45, warm: .55 });
+    h.shape = 'lane';
+    h.lane = { ux: ux, uy: uy, len: LEN, hw: HW, sx: e.x, sy: e.y };
+    h.wx = ux * 165; h.wy = uy * 165;                    /* 顺着风被推走 */
+    h.slam0 = 26 + ph * 4;
+    h.slamDmg = 0;                                       /* 抓到人才挂牌，落空就是 0 */
+    h.life0 = h.life;
+    h.grab = null;                                       /* null=未判定；true=卷上了 */
+    addRing(e.x, e.y, '#d8b078', 20, 300, .55);
+    for (let k = 0; k < 22; k++) {                       /* 风道沿途沙尘预兆 */
+      const d = rnd(60, LEN);
+      addPart(e.x + ux * d - uy * rnd(-40, 40), e.y + uy * d + ux * rnd(-40, 40), '#d8b078', 220, 3);
+    }
     S.shake = Math.min(10, S.shake + 4);
     SFX.alarm();
   },
@@ -8525,8 +8549,72 @@ function drawHazards() {
 
     if (h.kind === 'tide') { drawTide(h); ctx.restore(); continue; }
     if (h.kind === 'gaze') { drawGaze(h, fade, warn); ctx.restore(); continue; }
-    if (h.kind === 'sand') {   /* 0.42.1 沙暴：收缩圈=摔落倒计时，风从头到尾看得见 */
+    if (h.kind === 'sand') {   /* 0.51.4 直线风道：预警画走廊虚线，风起画风带流线；抓起后悬空沙尘+收缩圈照旧 */
       const p = S.player;
+      if (h.shape === 'lane' && h.lane) {
+        const L = h.lane, px2 = -L.uy, py2 = L.ux;
+        const warn = (S.t - h.born) < h.warm;
+        const cx1 = L.sx + px2 * L.hw, cy1 = L.sy + py2 * L.hw;
+        const cx2 = L.sx - px2 * L.hw, cy2 = L.sy - py2 * L.hw;
+        const cx3 = L.sx + L.ux * L.len - px2 * L.hw, cy3 = L.sy + L.uy * L.len - py2 * L.hw;
+        const cx4 = L.sx + L.ux * L.len + px2 * L.hw, cy4 = L.sy + L.uy * L.len + py2 * L.hw;
+        if (warn) {
+          /* 预警：走廊虚线轮廓 + 源头往外飘的箭羽——风向一眼可读 */
+          ctx.setLineDash([12, 9]);
+          ctx.strokeStyle = 'rgba(216,176,120,.8)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(cx1, cy1); ctx.lineTo(cx4, cy4); ctx.lineTo(cx3, cy3); ctx.lineTo(cx2, cy2);
+          ctx.closePath(); ctx.stroke();
+          ctx.setLineDash([]);
+          for (let i2 = 0; i2 < 3; i2++) {
+            const d = 120 + ((S.t * 300 + i2 * 140) % 320);
+            const bx = L.sx + L.ux * d, by = L.sy + L.uy * d;
+            ctx.strokeStyle = 'rgba(216,176,120,.5)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(bx - L.ux * 14 + px2 * 12, by - L.uy * 14 + py2 * 12);
+            ctx.lineTo(bx, by);
+            ctx.lineTo(bx - L.ux * 14 - px2 * 12, by - L.uy * 14 - py2 * 12);
+            ctx.stroke();
+          }
+        } else {
+          /* 风带本体：半透明走廊 + 顺风流线（从头刮到尾） */
+          ctx.fillStyle = 'rgba(216,176,120,.14)';
+          ctx.beginPath();
+          ctx.moveTo(cx1, cy1); ctx.lineTo(cx4, cy4); ctx.lineTo(cx3, cy3); ctx.lineTo(cx2, cy2);
+          ctx.closePath(); ctx.fill();
+          for (let i2 = 0; i2 < 4; i2++) {
+            const off = (i2 - 1.5) * (L.hw / 2);
+            const run = (S.t * 520 + i2 * 97) % (L.len + 120);
+            const sx2 = L.sx + L.ux * (run - 120) - L.uy * off, sy2 = L.sy + L.uy * (run - 120) + L.ux * off;
+            const ex3 = L.sx + L.ux * run - L.uy * off, ey3 = L.sy + L.uy * run + L.ux * off;
+            ctx.strokeStyle = 'rgba(216,176,120,' + (.3 + .18 * Math.sin(S.t * 10 + i2 * 2)).toFixed(2) + ')';
+            ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(sx2, sy2); ctx.lineTo(ex3, ey3); ctx.stroke();
+          }
+        }
+        if (h.grab === true) {
+          /* 旋转沙尘：围着人转的一圈 */
+          for (let i2 = 0; i2 < 8; i2++) {
+            const a2 = S.t * 6 + i2 / 8 * RAD;
+            ctx.fillStyle = 'rgba(216,176,120,.4)';
+            ctx.beginPath();
+            ctx.arc(p.x + Math.cos(a2) * 34, p.y + Math.sin(a2) * 34 - 10, 4 + i2 % 3, 0, RAD);
+            ctx.fill();
+          }
+          /* 摔落倒计时：圈从 108 收缩到脚底，快落地时转红闪 */
+          const prog = 1 - Math.max(0, h.life) / (h.life0 || 1.5);
+          const rr = 108 * (1 - prog) + 16;
+          const hot = prog > .62;
+          ctx.globalAlpha = hot ? (.75 + .25 * Math.sin(S.t * 30)) : .8;
+          ctx.strokeStyle = hot ? 'rgba(255,120,80,.95)' : 'rgba(255,220,150,.85)';
+          ctx.lineWidth = hot ? 4.5 : 3;
+          ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, RAD); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore(); continue;
+      }
       const wl = Math.hypot(h.wx || 0, h.wy || 0) || 1;
       const ux = h.wx / wl, uy = h.wy / wl;
       /* 风道：三道流线从上游刮到玩家，别跟脚下粒子混 */
@@ -10815,6 +10903,12 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.51.4', d: '11-08', t: '沙暴重做：必中圈改直向风道', items: [
+    '风从 BOSS 中心沿锁定方向吹出一条直向风道（长 560 / 半宽 78）——出手瞬间定风向，不追人',
+    '0.55 秒预警只画走廊虚线轮廓 + 箭羽指风，不判定；垂直于风向跨一步就出，躲法明确',
+    '风起后持续 1.45 秒、走廊内每帧判定：被卷上天顺风推、摔落结算（伤害不变）',
+    '风是持续的：预警时站旁边、风起后中途走进走廊照样会被卷——别贴着风道边缘晃',
+  ] },
   { v: '0.51.3', d: '11-08', t: '场地「退出」统一回 DEV 工具台', items: [
     '场上浮层「退出」和场地阵亡结算「退出」原先都回主菜单——和暂停里 0.50.1 已修的行为不一致，现统一回 DEV 工具台测试场地页',
     '顺带保险：退出时照旧清掉 ARENA.on / runMode，杜绝场地状态残留到下一局',
@@ -11357,7 +11451,7 @@ const ATK_INFO = {
   burrow:     { name: '游钻',     demo: 'blink',  desc: '钻进地下绕你快游，地面裂纹拖尾就是它的位置；越转越近就是要撞了——破土无预警直接冲，浮出那一下才挨打' },
   /* 0.42.0 荒原重做：小招 / 连招 / 位移 */
   fissureAround: { name: '周身裂地', demo: 'line',   desc: '你脚边一圈地同时裂开——别站着，往裂缝之间挪' },
-  sandstorm:     { name: '沙暴摔落', demo: 'wave',   desc: '整个人被卷到半空往后吹（影子在地上），收缩圈缩到脚下就是摔落——快落地圈会转红' },
+  sandstorm:     { name: '沙暴摔落', demo: 'wave',   desc: '风从 BOSS 中心吹出一条直向风道（虚线预警），站在走廊里被卷上天顺风推，落地才疼——垂直跨出走廊就躲开' },
   quakeRockCharge:{ name: '裂地三连', demo: 'tide', desc: '地震带→落石→冲撞，三拍逼你换三种走法' },
   slopeMove:     { name: '土坡滑行', demo: 'charge', desc: '脚下拱起土坡，它站坡顶一路滑下来——比冲撞还快' },
   sandBoost:     { name: '沙爆推进', demo: 'wave',   desc: '沙爆把它推过来，同时把你往后吹——距离瞬间被改写' },
