@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.51.5
+   幸存者 · 极简版  v0.52.0
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -1874,14 +1874,16 @@ const BOSSES = {
   frost: {
     name: '冰原领主', color: '#7fe0ff', shape: 'blob', look: 'crystal',
     r: 50, keep: 340, gap: 2.20,
-    /* 0.51.0 整套重做「冰面三性 + 三阶段两段式终局」：
-       小招 ×5（冰扇/冰锥天落/冰墙/霜环/滑步突进）、中招 ×3（冰湖/霜封/冰镜分身）、
-       大招冰川纪四步、位移 ×2、连招 ×2。P1/P2 走节奏器，P3 由 frostSequence 接管两段式。 */
-    moves: ['iceFan', 'iceSpikes', 'iceWall', 'frostNova', 'slideDash', 'iceSkate', 'iceBlink'],
-    rhCombos: ['slideCombo', 'wallPocket'],
-    mids: ['iceLake', 'frostPrison', 'iceMirror'],
-    ult: 'glacierAge', read: ['punishWeave', 'punishFar'],
-    rhythm: { small: 2, combo: 1, mid: 2 },   /* P1＝小×2→连×1 循环；P2 两套中招后大招 */
+    /* 0.52.0 二次重做「控制 / 走位 / 地图控制」：
+       小招 ×6（冰墙/霜封/冰锥天落/滑步突进/冰凌跃迁/冰镜分身）——前五个照旧，冰镜改新版（镜中走出分身 10s 配合攻击）；
+       连招 ×2（分身跃迁到处喷射 / 三分身排队冲撞——收银台式排队轮流撞）；
+       中招 ×3（雪崩找掩体 / 冰迷宫找出口 / 三角包围·中点三角形细分区域攻击）；
+       大招冰世纪（升空三分身，三块 1/3 地图各放一招 + 天降雨弹）。
+       P1=(小×2→连)×2→中；P2=三中招各一次→大招；P3=寒潮墙推（保留）→ 肉山冰墙循环（右边界三喷口 + 拾取冰晶削血 → 虚弱）。 */
+    moves: ['iceWall', 'frostPrison', 'iceSpikes', 'slideDash', 'iceBlink', 'mirrorClone'],
+    rhCombos: ['blinkSpray', 'queueCharge'],
+    mids: ['avalanche', 'iceMaze', 'triSiege'],
+    ult: 'iceAge', read: ['punishWeave', 'punishFar'],
     script: 'frost',
   },
   vEye: {
@@ -1976,6 +1978,79 @@ const GLACIER = {
   tierHp: [1, .96, .92, .88, .84, .80, .76],        // 核心 HP 百分比
   tierShield: [.80, .77, .74, .71, .68, .64, .60],  // 护盾减伤
   tierSpin: [1, .98, .96, .94, .92, .89, .86],      // 柱转速系数
+};
+
+/* ---------- 冰原领主二番重做（0.52.0）数值表：分身/雪崩/迷宫/三角/冰世纪/肉山 ----------
+   全部数值集中在这里，实机手调只改表。系统由 updateFrostSys 驱动，仅 frost 在场时激活。 */
+const FROST2 = {
+  /* —— 冰镜分身（小招新版）—— */
+  mirrorTell: .8,      // 镜子成形秒数（成形后分身走出）
+  mirrorTtl: 10,       // 分身存活秒数（10 秒配合攻击）
+  mirrorGap: 1.5,      // 分身自主开火间隔
+  mirrorDmgMul: .5,    // 分身弹幕伤害倍率
+  /* —— 连招：分身跃迁到处喷射 —— */
+  sprayN: 5,           // 跃迁次数（4-5 次）
+  sprayGap: .78,       // 每次跃迁间隔
+  sprayRing: 14,       // 每次环形弹幕颗数（本体）
+  sprayTtl: 6.5,       // 分身寿命
+  /* —— 连招：三分身排队冲撞 —— */
+  queueGap: .95,       // 两次冲撞间隔
+  queueDashT: .55,     // 单次冲撞时长
+  queueDashSpd: 680,   // 冲撞速度
+  queueSlotGap: 200,   // 排队间距（沿延长线）
+  queueDmg: 22,        // 冲撞接触伤害
+  queueRounds: 2.66,   // 总轮数（2.66 轮 = 8 冲，末轮本体免冲）
+  /* —— 中招：雪崩 —— */
+  avaSpd: 135,         // 雪崩前沿下压速度（覆盖整个地图从上到下）
+  avaBand: 150,        // 前沿死亡带厚度
+  avaDmg: 20,          // 死亡带内每跳伤害
+  avaTick: .45,        // 伤害跳间隔
+  avaShelters: 3,      // 庇护所数量
+  avaShelterR: 150,    // 庇护所半径
+  /* —— 中招：冰迷宫 —— */
+  mazeCell: 118,       // 迷宫格边长
+  mazeCols: 8,         // 横向格数
+  mazeRows: 5,         // 纵向格数
+  mazeT: 9,            // 迷宫存续秒数
+  mazeWallP: .42,      // 内部墙概率（生成后保连通）
+  mazeExits: 4,        // 外墙出口数
+  mazeRainCd: .75,     // 迷宫内冰弹节奏
+  mazePillarR: 15,     // 墙柱半径（链状冰柱，复用 icePillar 碰撞/绘制）
+  /* —— 中招：三角包围 —— */
+  triSide: 620,        // 包围三角形边长
+  triFormT: .8,        // 成形秒数（瞬移到位 + 冰墙连边）
+  triWarn: .7,         // 区域攻击预警秒数
+  triHit: .55,         // 区域伤害持续秒数
+  triGap: .35,         // 两轮间隔
+  triRounds: 4,        // 细分攻击轮数（末轮区域≈1.5~3 倍玩家体型）
+  triDmg: 18,          // 区域内每跳伤害
+  triFanCd: 1.2,       // 三体瞄准冰扇节奏
+  triLaserCd: 2.1,     // 冰激光节奏（细线预警后沿线灼烧）
+  /* —— 大招：冰世纪 —— */
+  ageZoom: .7,         // 升空前视角拉远系数
+  ageFlyT: 1.1,        // 升空秒数
+  ageDomainT: 1.3,     // 三块冰之领域扩散秒数（纯演出无伤害）
+  ageAtkT: 7,          // 三分洲攻击持续秒数
+  ageEndT: 1.1,        // 回场秒数
+  ageRainCd: .45,      // 天降雨弹节奏（垂直于上边界落下）
+  ageRainN: 4,         // 每波颗数
+  ageRainSpd: 260,     // 雨弹速度
+  ageSpikeCd: 1.3,     // 左洲冰锥天落节奏
+  ageAvaCd: 3.2,       // 中洲微型雪崩节奏
+  ageMazeCd: 2.6,      // 右洲碎冰墙节奏
+  /* —— P3-B 肉山冰墙 —— */
+  fleshSprayCd: .8,    // 三喷口吐弹节奏
+  fleshZoneCols: 2,    // 效果区横向切分（左 78% 地图切 2×3 区）
+  fleshZoneRows: 3,
+  fleshZoneDmg: 16,    // 分割区域伤害
+  fleshZoneWarn: .8,   // 分割区域预警
+  fleshZoneCd: 2.4,    // 区域攻击节奏
+  fleshPickN: 3,       // 冰晶拾取数（每颗削 boss 大血）
+  fleshPickDmg: .07,   // 每颗冰晶 = boss 最大生命 7%
+  fleshWeakT: 6,       // 拾取全部后虚弱秒数（不攻击，站桩挨打）
+  /* —— 拾取 —— */
+  spdPickMul: 1.4,     // 雪崩庇护所加速拾取：移速 ×1.4
+  spdPickT: 15,        // 加速持续秒数
 };
 
 /* ---------- 狂潮模式参数 ----------
@@ -2214,6 +2289,9 @@ function startArena() {
   S.ebullets.length = 0; S.bullets.length = 0; S.hazards.length = 0;
   S.pending.length = 0; S.gems.length = 0; S.shrouds = []; S.night = null;
   S.props.length = 0; S.hiveGrab = null;
+  S.frostClones.length = 0; S.frostQueue = null; S.avalanche = null;
+  S.iceMaze = null; S.tri = null; S.iceAge = null; S.flesh = null;
+  S.player.spdBoostT = 0;
   S.bossQueue.length = 0; S.rushBossT = 1e9; S.rushEliteT = 1e9; S.bossCap = 0;
   S.arenaDead = 0;
   S.player.x = WORLD.w / 2; S.player.y = WORLD.h / 2;
@@ -2584,7 +2662,14 @@ function newGame(mode, stageIdx) {
     camZoom: 1,          // 渲染缩放系数（P3 拉远 0.75，插值回 1）
     iceGrab: null,       // P3-A 开场冰浪卷人（复用 hiveGrab 同类强移）
     iceWave: null,       // P3-A 寒潮推进 {phase,x,speed,cores[],got,t}
-    prism: null,         // P3-B 霜冠 {ang,spin,len,shield,phase,laps,ultWarn}
+    prism: null,         // P3-B 霜冠 {ang,spin,len,shield,phase,laps,ultWarn}（0.52.0 起休眠，被肉山冰墙取代）
+    frostClones: [],     // 0.52.0 冰原分身（冰镜/跃迁喷射/排队/三角/肉山共用）
+    frostQueue: null,    // 0.52.0 排队冲撞状态
+    avalanche: null,     // 0.52.0 雪崩 {y,spd,shelters[],cd}
+    iceMaze: null,       // 0.52.0 冰迷宫 {t,rainT,cx,cy}
+    tri: null,           // 0.52.0 三角包围 {phase,...}
+    iceAge: null,        // 0.52.0 大招冰世纪 {t,phase,boss}
+    flesh: null,         // 0.52.0 P3-B 肉山冰墙 {cycle,weak,...}
     /* 0.46.0：关卡开局等级 = 1+ΔL*(n-1)、等级帽 = 1+ΔL*n（n=stageIdx+1）；无尽/狂潮仍从 1 级起 */
     level: md === 'stage' ? (1 + SAWTOOTH.dL * si) : 1,
     levelCap: md === 'stage' ? (1 + SAWTOOTH.dL * (si + 1)) : Infinity,
@@ -3303,6 +3388,7 @@ function makeBoss(c, i, n, pos, hpTotal) {
     color: def.color, flash: 0, slowT: 0, lastOrb: -99,
     st: 'move', timer: 2.0 + i * .35, dx: 0, dy: 0, fuse: 0, spin: 0,
     phase: 1, chargeCd: 4.5 + rnd(0, 2), charging: 0, winding: 0, cdx: 0, cdy: 0,
+    casting: 0, rest: 0,   /* 0.52.0 补初始化：undefined 参与 Math.max 会产出 NaN（冰原 fseq 实锤） */
     mvIdx: 0, phaseCd: 0,
     /* 0.37.0：动画字段。以前一个都没有，导致呼吸/挤压/朝向/踏步全部静默失效，
        BOSS 就成了一块固定朝向的贴图在平移 */
@@ -4447,7 +4533,7 @@ function updateIce(dt) {
   }
 
   /* 视角插值：P3 推进/霜冠成形期拉远 0.75，六柱立起 1 秒内回 1 */
-  const target = (S.iceWave || (S.prism && S.prism.formT > 0)) ? GLACIER.camZoomA : 1;
+  const target = (S.iceWave || (S.prism && S.prism.formT > 0) || S.iceAge) ? GLACIER.camZoomA : 1;
   S.camZoom += (target - S.camZoom) * Math.min(1, dt * 3);
   if (Math.abs(S.camZoom - target) < .005) S.camZoom = target;
 }
@@ -4565,7 +4651,7 @@ function updateFrostP3(dt) {
         S.flash = Math.max(S.flash, .5);
         SFX.kill();
         S.iceWave = null;
-        if (boss) startPrism(boss);
+        if (boss) startFleshWall(boss);   /* 0.52.0：推完墙 → 肉山冰墙循环（霜冠休眠） */
       }
     }
     return;
@@ -4633,6 +4719,8 @@ function updateFrostP3(dt) {
       }
     }
   }
+  /* 0.52.0 冰原二番重做全系统：分身/雪崩/迷宫/三角/冰世纪/肉山（非 frost 战内部直接闲置） */
+  updateFrostSys(dt);
 }
 
 /* P3-B 起手：按冰核档位收缩核心有效血量，霜冠成形 */
@@ -4651,15 +4739,52 @@ function startPrism(e) {
   SFX.alarm();
 }
 
-/* —— 冰原出招脚本：P1/P2 走节奏器（小×2→连×1→中×2→大），P3 交两段式接管 —— */
+/* —— 冰原出招脚本 v2（0.52.0）：
+   P1 = (小×2 → 连)×2套 → 中招；P2 = 三中招各一次 → 大招冰世纪；
+   P3 = 寒潮墙推（保留）→ 肉山冰墙循环（startFleshWall 接管，本体钉死右边界）。 —— */
 function frostSequence(e, def, ph) {
+  if (S.flesh || S.iceAge) return;                 /* 肉山/冰世纪期间招式全由冰原系统驱动 */
   if (ph >= 3) {
-    if (!S.iceWave && !S.prism) startIceWave(e);
-    return;                           /* P3 招式全由 updateFrostP3 驱动，本体钉死 */
+    if (!S.iceWave && !S.flesh) startIceWave(e);
+    return;
   }
-  let did = false;
-  if (e.readCd <= 0 && (diff().read || 0) > 0 && e.pProfile) did = castRead(e, def, ph);
-  if (!did) rhythmCast(e, def, ph);
+  if (e.readCd <= 0 && (diff().read || 0) > 0 && e.pProfile) { if (castRead(e, def, ph)) return; }
+  if (!e.fseq || e.fseq.i >= e.fseq.q.length) e.fseq = frostBuild(e, ph);
+  const step = e.fseq.q[e.fseq.i++];
+  if (step.mid) {
+    const info = ULT_INFO[step.mid] || { name: step.mid, sub: '' };
+    announce(e.bossName + ' · ' + info.name, info.sub, e.color, true);
+    BGM.duck(1.4);
+    castMove(step.mid, ULT[step.mid], e, ph);
+    e.casting = Math.max(e.casting, 1.2);
+    e.timer = bossGap(e, def) * 1.5;
+  } else if (step.ult) {
+    const info = ULT_INFO[def.ult] || { name: def.ult, sub: '' };
+    announce(e.bossName + ' · ' + info.name, info.sub, e.color, true);
+    BGM.duck(2.2);
+    castMove(def.ult, ULT[def.ult], e, ph);
+    e.casting = Math.max(e.casting, 2.5);
+    e.timer = bossGap(e, def) * 1.9;
+  } else {
+    castMove(step, ATK[step] || ULT[step], e, ph);
+    e.timer = bossGap(e, def) * rnd(.88, 1.12);
+  }
+}
+function frostBuild(e, ph) {
+  const def = e.def || BOSSES.frost;
+  const s = def.moves, c = def.rhCombos, m = def.mids;
+  e.fmv = e.fmv || 0; e.fci = e.fci || 0; e.fmi = e.fmi || 0;
+  const q = [];
+  if (ph === 1) {
+    for (let r = 0; r < 2; r++) {                          /* (小×2 → 连)×2套 */
+      q.push(s[(e.fmv++) % s.length], s[(e.fmv++) % s.length], c[(e.fci++) % c.length]);
+    }
+    q.push({ mid: m[(e.fmi++) % m.length] });              /* 接中招 */
+  } else {
+    for (let k = 0; k < 3; k++) q.push({ mid: m[(e.fmi++) % m.length] });   /* 中×3 */
+    q.push({ ult: 1 });                                    /* 接大招 */
+  }
+  return { q, i: 0 };
 }
 
 /* P3-A 起手：冰浪卷人丢到最左侧 → 领主落左墙 → 竖墙从左向右推 */
@@ -4689,6 +4814,582 @@ function startIceWave(e) {
   S.iceWave = { phase: 'push', x: x0 - 90, speed: GLACIER.wallSpd, cores: cores, got: 0, t: 0 };
   S.shake = Math.min(18, S.shake + 10);
   SFX.alarm();
+}
+
+/* =========================================================
+   冰原领主 0.52.0 系统层：分身 / 冰镜 / 排队冲撞 / 雪崩 / 冰迷宫 /
+   三角包围 / 冰世纪 / 肉山冰墙 / 拾取。
+   updateFrostSys 由 updateIce 末尾调用（仅 frost 在场激活，闲置零开销）。
+   分身不走 enemies（不可被瞄），全部数值在 FROST2 表。
+   ========================================================= */
+function frostBoss() {
+  return S.bosses.find(b => b.bossId === 'frost' && !b.clone && b.hp > 0) || null;
+}
+function spawnFrostClones(e, n, ttl) {
+  for (let k = 0; k < n; k++) {
+    S.frostClones.push({
+      x: clamp(e.x + rnd(-160, 160), 50, WORLD.w - 50),
+      y: clamp(e.y + rnd(-160, 160), 50, WORLD.h - 50),
+      r: 26, ttl: ttl, gun: false, gunT: 1,
+    });
+    addRing(S.frostClones[S.frostClones.length - 1].x, S.frostClones[S.frostClones.length - 1].y, '#cfeeff', 8, 420, .4);
+  }
+}
+function blinkSpread(e, n, dMin, dMax) {   /* n 个互不贴脸的散点（围绕玩家） */
+  const p = S.player, out = [];
+  for (let k = 0; k < n; k++) {
+    const a = Math.random() * RAD, d = rnd(dMin, dMax);
+    out.push({ x: clamp(p.x + Math.cos(a) * d, 50, WORLD.w - 50), y: clamp(p.y + Math.sin(a) * d, 50, WORLD.h - 50) });
+  }
+  return out;
+}
+function pointInTri(px, py, T) {
+  const [a, b, c] = T;
+  const s1 = (b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0]);
+  const s2 = (c[0] - b[0]) * (py - b[1]) - (c[1] - b[1]) * (px - b[0]);
+  const s3 = (a[0] - c[0]) * (py - c[1]) - (a[1] - c[1]) * (px - c[0]);
+  return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
+}
+function triSubdivide(A, B, C, level, out) {
+  if (level <= 0) { out.push([A, B, C]); return; }
+  const AB = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+  const BC = [(B[0] + C[0]) / 2, (B[1] + C[1]) / 2];
+  const CA = [(C[0] + A[0]) / 2, (C[1] + A[1]) / 2];
+  triSubdivide(A, AB, CA, level - 1, out);
+  triSubdivide(AB, B, BC, level - 1, out);
+  triSubdivide(BC, C, CA, level - 1, out);
+  triSubdivide(AB, BC, CA, level - 1, out);
+}
+function triWallChain(x1, y1, x2, y2, life, store) {
+  const len = Math.hypot(x2 - x1, y2 - y1), n = Math.max(2, Math.round(len / 36));
+  for (let k = 0; k <= n; k++) {
+    const pr = { kind: 'icePillar', x: x1 + (x2 - x1) * k / n, y: y1 + (y2 - y1) * k / n, r: 14, life: life };
+    S.props.push(pr); if (store) store.push(pr);
+  }
+}
+function frostRainShot(x, y, ang, spd, dmg) {
+  shootEnemyBullet({ x: x, y: y, r: 10 }, S.player, ang, spd, dmg,
+    { color: '#cfeeff', kind: 'ice', r: 7, life: 5, ox: x, oy: y, frostAdd: 8 });
+}
+
+function updateFrostSys(dt) {
+  updateFrostMirror(dt);
+  updateFrostClones(dt);
+  updateFrostQueue(dt);
+  updateAvalanche(dt);
+  updateIceMaze(dt);
+  updateTriSiege(dt);
+  updateIceAge(dt);
+  updateFleshWall(dt);
+  updateFrostPickups(dt);
+}
+
+/* 冰镜：成形后分身走出 */
+function updateFrostMirror(dt) {
+  if (!S.frostMirror) return;
+  const M = S.frostMirror;
+  M.t -= dt;
+  if (M.t <= 0) {
+    S.frostClones.push({ x: M.x, y: M.y, r: 26, ttl: FROST2.mirrorTtl, gun: true, gunT: .4, dmgMul: FROST2.mirrorDmgMul });
+    addRing(M.x, M.y, '#e8fbff', 12, 520, .5);
+    for (let k = 0; k < 12; k++) addPart(M.x, M.y, '#e8fbff', rnd(120, 300), 3);
+    S.frostMirror = null;
+    SFX.zap();
+  }
+}
+
+/* 分身：寿命 / 镜像分身自主开火（配合攻击） */
+function updateFrostClones(dt) {
+  for (let i = S.frostClones.length - 1; i >= 0; i--) {
+    const c = S.frostClones[i];
+    if (c.ttl < 60) {
+      c.ttl -= dt;
+      if (c.ttl <= 0) {
+        addRing(c.x, c.y, '#cfeeff', 8, 380, .4);
+        for (let k = 0; k < 8; k++) addPart(c.x, c.y, '#cfeeff', rnd(80, 240), 3);
+        S.frostClones.splice(i, 1); continue;
+      }
+    }
+    if (c.gun) {
+      c.gunT -= dt;
+      if (c.gunT <= 0) {
+        c.gunT = FROST2.mirrorGap;
+        const base = Math.atan2(S.player.y - c.y, S.player.x - c.x);
+        for (let k = -2; k <= 2; k++) {
+          shootEnemyBullet(c, S.player, base + k * .2, 250, 9 * (c.dmgMul || .5),
+            { color: '#cfeeff', kind: 'ice', r: 6, life: 2.4, ox: c.x, oy: c.y, frostAdd: 10 });
+        }
+      }
+    }
+  }
+}
+
+/* 排队冲撞：far→mid→boss 轮流冲，2.66 轮（末轮本体不冲） */
+function updateFrostQueue(dt) {
+  const Q = S.frostQueue; if (!Q) return;
+  const e = frostBoss(); if (!e) { S.frostQueue = null; return; }
+  if (Q.cur) {
+    const u = Q.cur; u.t -= dt;
+    const who = u.slot === 0 ? e : S.frostClones[u.slot - 1];
+    if (who) {
+      who.x = clamp(who.x - Q.ux * FROST2.queueDashSpd * dt, 30, WORLD.w - 30);
+      who.y = clamp(who.y - Q.uy * FROST2.queueDashSpd * dt, 30, WORLD.h - 30);
+      if (Math.random() < .5) addPart(who.x, who.y, '#cfeeff', 90, 2.5);
+      if (!u.hit && Math.hypot(S.player.x - who.x, S.player.y - who.y) < (who.r + S.player.r + 4)) {
+        u.hit = true;
+        damagePlayer(FROST2.queueDmg, who.x, who.y);
+        S.shake = Math.min(14, S.shake + 5);
+      }
+    }
+    if (u.t <= 0) Q.cur = null;
+    return;
+  }
+  Q.t -= dt;
+  if (Q.t <= 0) {
+    if (Q.i >= Q.order.length) {
+      for (const c of S.frostClones) c.ttl = Math.min(c.ttl, 1.2);
+      S.frostQueue = null;
+      return;
+    }
+    const slot = Q.order[Q.i++];
+    const who = slot === 0 ? e : S.frostClones[slot - 1];
+    if (who) {
+      addRing(who.x, who.y, '#cfeeff', 10, 460, .3);
+      announce('冲锋 ' + (Q.i) + '/' + Q.order.length, slot === 0 ? '本体来了！' : '分身来了！', '#7fe0ff', false);
+      SFX.zap();
+    }
+    Q.cur = { slot: slot, t: FROST2.queueDashT, hit: false };
+    Q.t = FROST2.queueGap;
+  }
+}
+
+/* 雪崩：前沿从上压到下，庇护所内免疫，一个庇护所有加速冰晶 */
+function updateAvalanche(dt) {
+  const A = S.avalanche; if (!A) return;
+  const p = S.player;
+  A.y += A.spd * dt; A.t += dt; A.cd -= dt;
+  if (Math.random() < .8) addPart(rnd(0, WORLD.w), A.y - rnd(0, FROST2.avaBand), '#ffffff', 120, 2.5);
+  const inBand = p.y > A.y - FROST2.avaBand && p.y < A.y + 20;
+  const safe = A.shelters.some(s2 => Math.hypot(p.x - s2.x, p.y - s2.y) < s2.r);
+  if (inBand && !safe && A.cd <= 0) {
+    A.cd = FROST2.avaTick;
+    damagePlayerEnv(FROST2.avaDmg, p.x, p.y);
+    p.y = Math.min(WORLD.h - p.r, p.y + 60);   /* 被雪推着往下走 */
+  }
+  if (A.y - FROST2.avaBand > WORLD.h + 60) {
+    S.props = S.props.filter(pr => pr.kind !== 'spdPick');
+    S.avalanche = null;
+  }
+}
+
+/* 冰迷宫：冰弹雨从迷宫边缘随机柱位射向玩家 */
+function updateIceMaze(dt) {
+  const M = S.iceMaze; if (!M) return;
+  M.t -= dt; M.rainT -= dt;
+  if (M.rainT <= 0) {
+    M.rainT = FROST2.mazeRainCd;
+    const pillars = S.props.filter(pr => pr.kind === 'icePillar');
+    if (pillars.length) {
+      const pr = pillars[Math.floor(Math.random() * pillars.length)];
+      frostRainShot(pr.x, pr.y, undefined, 235, 10);
+    }
+  }
+  if (M.t <= 0) S.iceMaze = null;   /* 柱子按自身 life 自动消失 */
+}
+
+/* 三角包围：成形 → (细分 → 预警 → 伤害)×4 → 拆除 */
+function updateTriSiege(dt) {
+  const T = S.tri; if (!T) return;
+  const e = frostBoss();
+  const units = [e, S.frostClones[0], S.frostClones[1]].filter(Boolean);
+  T.t -= dt;
+  if (T.phase === 'form') {
+    const k = 1 - Math.max(0, T.t) / FROST2.triFormT;
+    for (let i2 = 0; i2 < units.length && i2 < 3; i2++) {
+      units[i2].x += (T.verts[i2].x - units[i2].x) * Math.min(1, dt * 6);
+      units[i2].y += (T.verts[i2].y - units[i2].y) * Math.min(1, dt * 6);
+    }
+    if (T.t <= 0) {
+      T.walls = [];
+      for (let k = 0; k < 3; k++) {
+        const A = T.verts[k], B = T.verts[(k + 1) % 3];
+        triWallChain(A.x, A.y, B.x, B.y, FROST2.triRounds * (FROST2.triWarn + FROST2.triHit + FROST2.triGap) + 1.5, T.walls);
+      }
+      T.tris = []; triSubdivide([T.verts[0].x, T.verts[0].y], [T.verts[1].x, T.verts[1].y], [T.verts[2].x, T.verts[2].y], 1, T.tris);
+      T.atk = T.tris.slice().sort(() => Math.random() - .5).slice(0, Math.ceil(T.tris.length / 2));
+      T.phase = 'warn'; T.warnT = FROST2.triWarn;
+      SFX.alarm();
+    }
+    return;
+  }
+  /* 攻击循环：预警 → 伤害 → 细分下一层 */
+  T.fanT -= dt; T.laserT -= dt;
+  if (T.fanT <= 0) {
+    T.fanT = FROST2.triFanCd;
+    for (const u of units) {
+      const base = Math.atan2(S.player.y - u.y, S.player.x - u.x);
+      for (let k = -2; k <= 2; k++) {
+        shootEnemyBullet(u, S.player, base + k * .17, 240, 10,
+          { color: '#cfeeff', kind: 'ice', r: 6, life: 2.2, ox: u.x, oy: u.y, frostAdd: 10 });
+      }
+    }
+  }
+  if (T.laserT <= 0 && units.length) {
+    T.laserT = FROST2.triLaserCd;
+    const u = units[Math.floor(Math.random() * units.length)];
+    T.laser = { x: u.x, y: u.y, ang: Math.atan2(S.player.y - u.y, S.player.x - u.x), t: .8, burn: 0 };
+    SFX.zap();
+  }
+  if (T.laser) {
+    T.laser.t -= dt;
+    if (T.laser.t < .25) {
+      T.laser.burn += dt;
+      const p = S.player, dx = p.x - T.laser.x, dy = p.y - T.laser.y;
+      const proj = dx * Math.cos(T.laser.ang) + dy * Math.sin(T.laser.ang);
+      const side = Math.abs(-dx * Math.sin(T.laser.ang) + dy * Math.cos(T.laser.ang));
+      if (proj > 0 && proj < 980 && side < 16) damagePlayerEnv(14, p.x, p.y);
+      if (T.laser.t <= 0) T.laser = null;
+    }
+  }
+  if (T.phase === 'warn') {
+    T.warnT -= dt;
+    if (T.warnT <= 0) { T.phase = 'hit'; T.hitT = FROST2.triHit; SFX.alarm(); }
+  } else if (T.phase === 'hit') {
+    T.hitT -= dt;
+    const p = S.player;
+    for (const tr of T.atk) {
+      if (pointInTri(p.x, p.y, tr)) { damagePlayerEnv(FROST2.triDmg, p.x, p.y); break; }
+    }
+    if (T.hitT <= 0) {
+      T.round++;
+      if (T.round >= FROST2.triRounds) {
+        for (const w2 of T.walls) w2.life = Math.min(w2.life, .4);
+        for (const c of S.frostClones) c.ttl = Math.min(c.ttl, 1);
+        S.tri = null;
+        return;
+      }
+      T.level++;
+      const next = [];
+      for (const tr of T.tris) triSubdivide(tr[0], tr[1], tr[2], 1, next);
+      T.tris = next;
+      T.atk = T.tris.slice().sort(() => Math.random() - .5).slice(0, Math.ceil(T.tris.length / 2));
+      T.phase = 'warn'; T.warnT = FROST2.triWarn;
+      SFX.alarm();
+    }
+  }
+}
+
+/* 冰世纪：升空 → 三块冰之领域（演出）→ 三分洲各一招 + 天降雨弹 → 回场 */
+function updateIceAge(dt) {
+  const A = S.iceAge; if (!A) return;
+  const e = A.boss, p = S.player, W = WORLD.w, H = WORLD.h;
+  A.t += dt;
+  if (A.phase === 'fly') {
+    const k = Math.min(1, A.t / FROST2.ageFlyT);
+    e.x = A.x0 + (W * .5 - A.x0) * k;
+    e.y = A.y0 + (-90 - A.y0) * k;
+    if (A.t >= FROST2.ageFlyT) {
+      A.phase = 'domain'; A.pt = 0;
+      A.anchors = [{ x: W * .25, y: -40 }, { x: W * .5, y: -40 }, { x: W * .75, y: -40 }];
+      for (const a of A.anchors) addRing(a.x, a.y + 60, '#cfeeff', 22, 900, .9);
+      announce('冰之领域', '三块大陆同时结冰——没有伤害，但接下来呢？', '#cfeeff', true);
+      SFX.kill();
+    }
+    return;
+  }
+  if (A.phase === 'domain') {
+    A.pt = (A.pt || 0) + dt;
+    if (Math.random() < .5) {
+      const a = A.anchors[Math.floor(Math.random() * 3)];
+      addIceTile(a.x + rnd(-W / 6, W / 6), rnd(80, H - 80), GLACIER.tileR * 1.6, Infinity);
+    }
+    if (A.pt >= FROST2.ageDomainT) { A.phase = 'atk'; A.pt = 0; SFX.alarm(); }
+    return;
+  }
+  if (A.phase === 'atk') {
+    A.pt += dt;
+    /* 左洲：冰锥天落 */
+    A.spikeT -= dt;
+    if (A.spikeT <= 0) {
+      A.spikeT = FROST2.ageSpikeCd;
+      (S.iceFall = S.iceFall || []);
+      for (let k = 0; k < 5; k++) {
+        S.iceFall.push({ x: rnd(30, W / 3), y: rnd(40, H - 40), r: 40, t: .55 + k * .05, dmg: 14 });
+      }
+    }
+    /* 中洲：微型雪崩（带状下扫，仅中 1/3 有效） */
+    A.avaT -= dt;
+    if (A.avaT <= 0) { A.avaT = FROST2.ageAvaCd; A.avaY = 0; }
+    if (A.avaY !== undefined && A.avaY !== null) {
+      A.avaY += 260 * dt;
+      if (p.x > W / 3 && p.x < W * 2 / 3 && Math.abs(p.y - A.avaY) < 70) damagePlayerEnv(12, p.x, p.y);
+      if (Math.random() < .7) addPart(rnd(W / 3, W * 2 / 3), A.avaY - rnd(0, 70), '#ffffff', 130, 2.5);
+      if (A.avaY > H + 60) A.avaY = null;
+    }
+    /* 右洲：碎冰墙（随机冰柱簇） */
+    A.mazeT -= dt;
+    if (A.mazeT <= 0) {
+      A.mazeT = FROST2.ageMazeCd;
+      const bx = rnd(W * 2 / 3 + 60, W - 90), by = rnd(90, H - 90);
+      for (let k = 0; k < 4; k++) {
+        S.props.push({ kind: 'icePillar', x: bx + rnd(-70, 70), y: by + rnd(-50, 50), r: 26, life: 3.2 });
+      }
+    }
+    /* 天降雨弹：垂直于上边界落下 */
+    A.rainT -= dt;
+    if (A.rainT <= 0) {
+      A.rainT = FROST2.ageRainCd;
+      for (let k = 0; k < FROST2.ageRainN; k++) frostRainShot(rnd(30, W - 30), -20, Math.PI / 2, FROST2.ageRainSpd, 11);
+    }
+    if (A.pt >= FROST2.ageAtkT) { A.phase = 'back'; A.pt = 0; A.bx0 = e.x; A.by0 = e.y; }
+    return;
+  }
+  if (A.phase === 'back') {
+    A.pt += dt;
+    const k = Math.min(1, A.pt / FROST2.ageEndT);
+    const tx = clamp(p.x + rnd(-260, 260), 60, W - 60), ty = clamp(p.y + rnd(-260, 260), 60, H - 60);
+    e.x = A.bx0 + (tx - A.bx0) * k;
+    e.y = A.by0 + (-90 - A.by0) * (1 - k) + (ty + 90) * 0;   /* 从天上落回 */
+    e.y = A.by0 + ((-90) - A.by0) * (1 - k) + (ty - (-90)) * 0;
+    e.y = A.by0 + (ty - A.by0) * k;                           /* 直接插值回场 */
+    if (A.pt >= FROST2.ageEndT) { e.x = tx; e.y = ty; addRing(e.x, e.y, e.color, 16, 700, .5); S.iceAge = null; }
+    return;
+  }
+}
+
+/* P3-B 肉山冰墙：右边界三喷口 + 分区效果 + 冰晶拾取 → 虚弱循环 */
+function startFleshWall(e) {
+  S.flesh = { boss: e, cycle: 1, weak: 0, sprayT: 1.4, zoneT: 2.2, zi: 0, zdmg: [], cycleT: 0 };
+  buildFleshCycle(e);
+}
+function buildFleshCycle(e) {
+  const F = S.flesh;
+  F.clones = [{ x: WORLD.w - 60, y: WORLD.h * .18, r: 28 }, { x: WORLD.w - 60, y: WORLD.h * .82, r: 28 }];
+  e.x = WORLD.w - 90; e.y = WORLD.h * .5;
+  const zw = (WORLD.w * .78) / FROST2.fleshZoneCols, zh = WORLD.h / FROST2.fleshZoneRows;
+  const kinds = ['maze', 'ava', 'zone'];
+  F.zones = [];
+  for (let i = 0; i < FROST2.fleshZoneCols; i++) {
+    for (let j = 0; j < FROST2.fleshZoneRows; j++) {
+      F.zones.push({ x: i * zw, y: j * zh, w: zw, h: zh, kind: kinds[(i + j) % 3] });
+    }
+  }
+  for (let k = 0; k < FROST2.fleshPickN; k++) {
+    const z = F.zones[Math.floor(Math.random() * F.zones.length)];
+    S.props.push({ kind: 'dmgPick', x: rnd(z.x + 70, z.x + z.w - 70), y: rnd(z.y + 70, z.y + z.h - 70), r: 20, life: 1e9 });
+  }
+  F.picksLeft = FROST2.fleshPickN;
+  announce('肉山冰墙 · 第 ' + F.cycle + ' 轮', '右边三个喷口不停吐弹——地图里找冰晶，捡一颗削它 7% 血', '#7fe0ff', true);
+  BGM.duck(1.6);
+  SFX.alarm();
+}
+function updateFleshWall(dt) {
+  const F = S.flesh; if (!F) return;
+  const e = F.boss, p = S.player;
+  if (!e || e.hp <= 0) { S.flesh = null; return; }
+  if (F.weak > 0) {
+    F.weak -= dt;
+    if (Math.random() < .3) addPart(e.x + rnd(-50, 50), e.y + rnd(-50, 50), '#ffffff', 90, 2.5);
+    if (F.weak <= 0) { F.cycle++; buildFleshCycle(e); }
+    return;
+  }
+  /* 本体钉右边界轻微巡航；喷口分身定住 */
+  e.x = WORLD.w - 90;
+  e.y = WORLD.h * .5 + Math.sin(S.t * .6) * 110;
+  /* 三喷口吐弹：瞄准三连扇 */
+  F.sprayT -= dt;
+  if (F.sprayT <= 0) {
+    F.sprayT = FROST2.fleshSprayCd;
+    for (const u of [e].concat(F.clones)) {
+      const aim = Math.atan2(p.y - u.y, p.x - u.x);
+      for (let k = -1; k <= 1; k++) {
+        shootEnemyBullet(u, p, aim + k * .16, 300, 11,
+          { color: '#cfeeff', kind: 'ice', r: 7, life: 3, ox: u.x, oy: u.y, frostAdd: 10 });
+      }
+    }
+    SFX.zap();
+  }
+  /* 分区效果轮转：迷宫 / 冰锥簇 / 分割区域伤害 */
+  F.zoneT -= dt;
+  if (F.zoneT <= 0) {
+    F.zoneT = FROST2.fleshZoneCd;
+    const z = F.zones[(F.zi++) % F.zones.length];
+    if (z.kind === 'maze') {
+      for (let k = 0; k < 4; k++) {
+        S.props.push({ kind: 'icePillar', x: rnd(z.x + 60, z.x + z.w - 60), y: rnd(z.y + 60, z.y + z.h - 60), r: 30, life: 4.5 });
+      }
+    } else if (z.kind === 'ava') {
+      (S.iceFall = S.iceFall || []);
+      for (let k = 0; k < 5; k++) {
+        S.iceFall.push({ x: rnd(z.x + 40, z.x + z.w - 40), y: rnd(z.y + 40, z.y + z.h - 40), r: 40, t: .55 + k * .05, dmg: 13 });
+      }
+    } else {
+      F.zdmg.push({ x: rnd(z.x + 40, Math.max(z.x + 41, z.x + z.w * .5)), y: rnd(z.y + 40, Math.max(z.y + 41, z.y + z.h * .5)),
+        w: z.w * .45, h: z.h * .4, t: FROST2.fleshZoneWarn, hit: false });
+    }
+  }
+  /* 分割区域：预警 → 伤害 */
+  for (let i = F.zdmg.length - 1; i >= 0; i--) {
+    const z = F.zdmg[i];
+    z.t -= dt;
+    if (z.t > 0) continue;
+    if (!z.hit) {
+      z.hit = true;
+      if (p.x > z.x && p.x < z.x + z.w && p.y > z.y && p.y < z.y + z.h) {
+        damagePlayerEnv(FROST2.fleshZoneDmg, p.x, p.y);
+        addRing(p.x, p.y, '#cfeeff', 10, 300, .4);
+      }
+    }
+    if (z.t < -FROST2.fleshZoneWarn) F.zdmg.splice(i, 1);
+  }
+}
+
+/* 拾取：加速（雪崩庇护所）/ 冰晶（肉山削 boss 血） */
+function updateFrostPickups(dt) {
+  const p = S.player;
+  for (let i = S.props.length - 1; i >= 0; i--) {
+    const pr = S.props[i];
+    if (pr.kind !== 'spdPick' && pr.kind !== 'dmgPick') continue;
+    if (Math.hypot(p.x - pr.x, p.y - pr.y) > pr.r + p.r + 6) continue;
+    if (pr.kind === 'spdPick') {
+      p.spdBoostT = FROST2.spdPickT;
+      announce('加速冰晶', '移速 ×1.4 · ' + FROST2.spdPickT + ' 秒——趁雪崩没压下来快跑', '#ffe36e', false);
+      SFX.evolve();
+    } else {
+      const F = S.flesh, b = F && F.boss;
+      if (b && b.hp > 0) {
+        b.hp = Math.max(1, b.hp - b.maxHp * FROST2.fleshPickDmg);   /* 打到 1 血为止：必须进虚弱才能击杀 */
+        if (F.picksLeft > 0) {
+          F.picksLeft--;
+          addRing(b.x, b.y, '#ffe36e', 14, 500, .5);
+          announce('冰晶命中', '削掉它 ' + Math.round(FROST2.fleshPickDmg * 100) + '% 血——还差 ' + F.picksLeft + ' 颗进虚弱', '#ffe36e', true);
+        }
+        if (F.picksLeft <= 0 && F.weak <= 0) {
+          F.weak = FROST2.fleshWeakT;
+          announce('领主虚弱', '冰晶全收——' + FROST2.fleshWeakT + ' 秒站桩输出窗口！', '#ffe36e', true);
+          S.shake = Math.min(18, S.shake + 8);
+          S.flash = Math.max(S.flash, .4);
+        }
+        SFX.kill();
+      }
+    }
+    S.props.splice(i, 1);
+  }
+}
+
+/* 0.52.0 冰原系统绘制（挂在主渲染的 props 段之后） */
+function drawFrost2() {
+  /* 分身：半透明水晶体 */
+  for (const c of S.frostClones) {
+    const fade = c.ttl < 60 ? Math.min(1, c.ttl / .8) : (.62 + .12 * Math.sin(S.t * 5));
+    ctx.globalAlpha = fade;
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, RAD);
+    ctx.fillStyle = 'rgba(127,224,255,.4)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(235,250,255,.85)'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  /* 冰镜 */
+  if (S.frostMirror) {
+    const M = S.frostMirror, k = 1 - M.t / FROST2.mirrorTell;
+    ctx.globalAlpha = .5 + .4 * Math.sin(S.t * 12);
+    ctx.fillStyle = 'rgba(200,240,255,.55)';
+    ctx.beginPath(); ctx.ellipse(M.x, M.y, 34, 52, 0, 0, RAD); ctx.fill();
+    ctx.strokeStyle = '#e8fbff'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (k > .6) {   /* 分身探出 */
+      ctx.beginPath(); ctx.arc(M.x, M.y + 20 * (k - .6) / .4, 22, 0, RAD);
+      ctx.fillStyle = 'rgba(127,224,255,.5)'; ctx.fill();
+    }
+  }
+  /* 雪崩：死亡带 + 庇护圈 */
+  if (S.avalanche) {
+    const A = S.avalanche;
+    ctx.fillStyle = 'rgba(240,248,255,.5)';
+    ctx.fillRect(0, A.y - FROST2.avaBand, WORLD.w, FROST2.avaBand + 20);
+    ctx.fillStyle = 'rgba(200,230,255,.75)';
+    ctx.fillRect(0, A.y - 14, WORLD.w, 16);
+    for (const s2 of A.shelters) {
+      ctx.beginPath(); ctx.arc(s2.x, s2.y, s2.r, 0, RAD);
+      ctx.fillStyle = 'rgba(120,255,200,.10)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(120,255,200,.8)'; ctx.lineWidth = 3;
+      ctx.setLineDash([14, 9]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  /* 三角包围：区域预警/伤害 + 激光 */
+  if (S.tri) {
+    const T = S.tri;
+    if (T.phase === 'warn' || T.phase === 'hit') {
+      for (const tr of T.atk) {
+        const hot = T.phase === 'hit';
+        ctx.beginPath();
+        ctx.moveTo(tr[0][0], tr[0][1]); ctx.lineTo(tr[1][0], tr[1][1]); ctx.lineTo(tr[2][0], tr[2][1]);
+        ctx.closePath();
+        ctx.fillStyle = hot ? 'rgba(160,230,255,.5)' : 'rgba(160,230,255,' + (.16 + .14 * Math.sin(S.t * 14)).toFixed(2) + ')';
+        ctx.fill();
+        if (hot) { ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.stroke(); }
+      }
+    }
+    if (T.laser) {
+      const L = T.laser;
+      ctx.beginPath(); ctx.moveTo(L.x, L.y);
+      ctx.lineTo(L.x + Math.cos(L.ang) * 980, L.y + Math.sin(L.ang) * 980);
+      ctx.strokeStyle = L.t < .25 ? 'rgba(255,255,255,.9)' : 'rgba(160,225,255,.55)';
+      ctx.lineWidth = L.t < .25 ? 9 : 2.5;
+      ctx.stroke();
+    }
+  }
+  /* 冰世纪：三块领域圈 + 中洲雪带 */
+  if (S.iceAge && S.iceAge.anchors) {
+    const A = S.iceAge;
+    for (const a of A.anchors) {
+      ctx.beginPath(); ctx.arc(a.x, a.y + 200, 260, 0, RAD);
+      ctx.strokeStyle = 'rgba(160,225,255,.35)'; ctx.lineWidth = 5; ctx.stroke();
+    }
+    if (A.avaY !== undefined && A.avaY !== null) {
+      ctx.fillStyle = 'rgba(240,248,255,.4)';
+      ctx.fillRect(WORLD.w / 3, A.avaY - 70, WORLD.w / 3, 70);
+    }
+  }
+  /* 肉山冰墙：分区网格 + 区域预警 + 喷口 */
+  if (S.flesh) {
+    const F = S.flesh;
+    for (const z of F.zones) {
+      ctx.strokeStyle = 'rgba(160,225,255,.25)'; ctx.lineWidth = 2;
+      ctx.strokeRect(z.x, z.y, z.w, z.h);
+    }
+    for (const z of F.zdmg) {
+      if (z.t > 0) {
+        ctx.fillStyle = 'rgba(160,230,255,' + (.14 + .12 * Math.sin(S.t * 14)).toFixed(2) + ')';
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+      } else if (!z.done) {
+        ctx.fillStyle = 'rgba(200,240,255,.5)';
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+        z.done = true;
+      }
+    }
+    if (F.weak > 0) {
+      const e = F.boss;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 18 + 6 * Math.sin(S.t * 10), 0, RAD);
+      ctx.strokeStyle = 'rgba(255,227,110,.9)'; ctx.lineWidth = 4; ctx.stroke();
+    }
+  }
+  /* 拾取物 */
+  for (const pr of S.props) {
+    if (pr.kind === 'spdPick') {
+      const bob = Math.sin(S.t * 5) * 4;
+      ctx.beginPath(); ctx.arc(pr.x, pr.y + bob, 12, 0, RAD);
+      ctx.fillStyle = 'rgba(255,227,110,.9)'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    } else if (pr.kind === 'dmgPick') {
+      const bob = Math.sin(S.t * 5 + 2) * 4;
+      ctx.beginPath();
+      ctx.moveTo(pr.x, pr.y - 14 + bob); ctx.lineTo(pr.x + 10, pr.y + bob);
+      ctx.lineTo(pr.x, pr.y + 14 + bob); ctx.lineTo(pr.x - 10, pr.y + bob);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(160,230,255,.95)'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
 }
 
 function updateHazards(dt) {
@@ -5194,6 +5895,11 @@ const ATK = {
   /* 滑步突进：贴地滑行撞人，路径留冰面 */
   slideDash(e, ph) { slideDashLike(e, ph, GLACIER.dashSpd, .62); },
 
+  /* 霜封（小招位别名）：0.52.0 从中招降为小招轮换，本体在 ULT 表 */
+  frostPrison(e, ph) { ULT.frostPrison(e, ph); },
+
+  /* 冰镜分身（小招新版）词条用 */
+
   /* 滑冰突进：只在冰面上可滑（速度 340），否则退化成普通滑步 */
   iceSkate(e, ph) {
     if (onIce(e.x, e.y)) {
@@ -5237,6 +5943,70 @@ const ATK = {
     ], i: 0, t: 0, dur: 3.4 };
     e.casting = 3.4;
     announce(e.bossName + ' · 冰墙口袋', '封一侧撞另一侧，退路还会结冰——提前找缺口', e.color, true);
+  },
+
+  /* ============ 0.52.0 冰原二番重做 新招式 ============ */
+
+  /* 小招：冰镜分身（新版）——BOSS 照一下冰面镜子，镜里走出第二个自己，10 秒配合攻击 */
+  mirrorClone(e, ph) {
+    if (S.frostClones.length) { ATK.iceFan(e, ph); return; }   /* 已有分身退化为冰扇 */
+    const p = S.player;
+    const a = Math.atan2(e.y - p.y, e.x - p.x);   /* 镜子立在 BOSS 背对玩家一侧 */
+    const mx = clamp(e.x + Math.cos(a) * 120, 60, WORLD.w - 60);
+    const my = clamp(e.y + Math.sin(a) * 120, 60, WORLD.h - 60);
+    S.frostMirror = { x: mx, y: my, t: FROST2.mirrorTell, boss: e };
+    announce(e.bossName + ' · 冰镜分身', '它照镜子了——镜里那个也是它', e.color, false);
+    SFX.zap();
+  },
+
+  /* 连招：分身跃迁到处喷射——三分身跟本体到处跃迁，每次落地一圈环形弹幕，跃迁 5 次 */
+  blinkSpray(e, ph) {
+    spawnFrostClones(e, 3, FROST2.sprayTtl);
+    const steps = [];
+    for (let k = 0; k < FROST2.sprayN; k++) {
+      steps.push({ t: .15 + k * FROST2.sprayGap, mv: 'spray' + k, fn: (e2) => {
+        const spots = blinkSpread(e2, S.frostClones.length + 1, 190, 430);
+        e2.x = spots[0].x; e2.y = spots[0].y;
+        addRing(e2.x, e2.y, '#cfeeff', 10, 620, .4);
+        ringShot(e2, ph, FROST2.sprayRing, 205, 8, '#cfeeff', 'ice', Math.random() * RAD, { frostAdd: 16 });
+        for (let c = 0; c < S.frostClones.length; c++) {
+          const cl = S.frostClones[c];
+          cl.x = spots[c + 1].x; cl.y = spots[c + 1].y;
+          addRing(cl.x, cl.y, '#cfeeff', 8, 480, .35);
+          ringShot(cl, ph, 9, 185, 6, '#cfeeff', 'ice', Math.random() * RAD, { frostAdd: 10 });
+        }
+        S.shake = Math.min(12, S.shake + 4);
+        SFX.zap();
+      } });
+    }
+    e.comboSeq = { steps: steps, i: 0, t: 0, dur: .15 + FROST2.sprayN * FROST2.sprayGap + .5 };
+    e.casting = e.comboSeq.dur;
+    announce(e.bossName + ' · 跃迁喷射', '四体乱闪、落地就是一圈弹——盯住离你最近那个', e.color, true);
+    SFX.alarm();
+  },
+
+  /* 连招：三分身排队冲撞——玩家是收银台，BOSS 带分身沿延长线排队，
+     离玩家最远的先冲，一轮 far→mid→near(boss)，撞 2.66 轮（末轮本体不冲） */
+  queueCharge(e, ph) {
+    spawnFrostClones(e, 2, 99);
+    const p = S.player;
+    const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy) || 1;
+    const ux = dx / d, uy = dy / d;
+    /* 排队：boss 最近（slot0），分身沿延长线排后（slot1/2）；冲锋顺序 far→mid→boss */
+    e.x = clamp(p.x + ux * 300, 50, WORLD.w - 50); e.y = clamp(p.y + uy * 300, 50, WORLD.h - 50);
+    if (S.frostClones[0]) { S.frostClones[0].x = clamp(p.x + ux * 500, 50, WORLD.w - 50); S.frostClones[0].y = clamp(p.y + uy * 500, 50, WORLD.h - 50); }
+    if (S.frostClones[1]) { S.frostClones[1].x = clamp(p.x + ux * 700, 50, WORLD.w - 50); S.frostClones[1].y = clamp(p.y + uy * 700, 50, WORLD.h - 50); }
+    const order = [];
+    const nCharges = Math.round(FROST2.queueRounds * 3);       /* 8 次 */
+    for (let k = 0; k < nCharges; k++) {
+      const round = Math.floor(k / 3), pos = k % 3;            /* 每轮 far→mid→boss */
+      if (pos === 2 && k >= nCharges - 1) continue;            /* 末轮本体不冲（.66 轮） */
+      const slot = 2 - pos;                                    /* pos0=最远=slot2 */
+      order.push(slot);
+    }
+    S.frostQueue = { order: order, i: 0, t: FROST2.queueGap, ux: ux, uy: uy, ph: ph };
+    announce(e.bossName + ' · 排队冲撞', '它们在排队撞你——最远的先来，一个接一个', e.color, true);
+    SFX.alarm();
   },
 
   /* --- 瞬移：消失 → 出现在你身边 → 立刻糊脸一圈 --- */
@@ -5741,6 +6511,10 @@ const ULT_INFO = {
   iceLake:      { name: '冰湖',     sub: '脚下铺开大湖——快，但霜积得也快' },
   frostPrison:  { name: '霜封',     sub: '亮圈锁位 0.9 秒，冰柱封死那个点——别在圈里恋战' },
   iceMirror:    { name: '冰镜分身', sub: '两面冰镜跟拍本体，一个血池——打谁都在削同一个池' },
+  avalanche:    { name: '雪崩',     sub: '整面雪从上压下来——进发光庇护圈，一个圈里有加速冰晶' },
+  iceMaze:      { name: '冰迷宫',   sub: '被困进冰迷宫——找出口，边走边躲冰弹' },
+  triSiege:     { name: '三角包围', sub: '冰墙合围 + 地砖式区域轰炸——看哪块先亮就离哪块远点' },
+  iceAge:       { name: '冰世纪',   sub: '升天分三体，三块大陆各挨一招 + 天降冰雨——抬头看落点' },
   shadowStorm:  { name: '影袭风暴', sub: '瞬移到你身边糊脸——保持横移' },
   gaze:         { name: '虚空凝视', sub: '一道锥形视线缓缓扫过——离开那束光' },
   longNight:    { name: '长夜',     sub: '全场暗下来，只剩它眼下那束光——跟着光走' },
@@ -5996,6 +6770,132 @@ const ULT = {
         } },
     ], i: 0, t: 0, dur: 5.8 };
     e.casting = 5.8;
+    S.shake = Math.min(16, S.shake + 8);
+    SFX.alarm();
+  },
+
+  /* ============ 0.52.0 冰原二番重做 中招 ×3 + 大招 ============ */
+
+  /* 中招：雪崩——全屏从上到下压过来，找庇护所躲；其中一个庇护所有加速拾取（15s） */
+  avalanche(e, ph) {
+    const shelters = [];
+    for (let k = 0; k < FROST2.avaShelters; k++) {
+      let x, y, ok = false, tries = 0;
+      while (!ok && tries++ < 30) {
+        x = rnd(180, WORLD.w - 180); y = rnd(160, WORLD.h - 180);
+        ok = shelters.every(s2 => Math.hypot(x - s2.x, y - s2.y) > 320);
+      }
+      shelters.push({ x: x, y: y, r: FROST2.avaShelterR });
+    }
+    const pickIdx = Math.floor(Math.random() * shelters.length);
+    S.props.push({ kind: 'spdPick', x: shelters[pickIdx].x, y: shelters[pickIdx].y - 30, r: 18, life: 1e9 });
+    S.avalanche = { y: -FROST2.avaBand, spd: FROST2.avaSpd, cd: 0, shelters: shelters, t: 0 };
+    announce(e.bossName + ' · 雪崩', '整面雪墙从上压下来——进发光的庇护圈，一个圈里有加速冰晶', e.color, true);
+    BGM.duck(1.6);
+    S.shake = Math.min(16, S.shake + 8);
+    SFX.alarm();
+  },
+
+  /* 中招：冰迷宫——以玩家为中心困进迷宫，多出口、边走边躲冰弹 */
+  iceMaze(e, ph) {
+    const p = S.player;
+    const cw = FROST2.mazeCell, ch = FROST2.mazeCell;
+    const cols = FROST2.mazeCols, rows = FROST2.mazeRows;
+    const cx = clamp(p.x, cols / 2 * cw + 40, WORLD.w - cols / 2 * cw - 40);
+    const cy = clamp(p.y, rows / 2 * ch + 40, WORLD.h - rows / 2 * ch - 40);
+    const x0 = cx - cols / 2 * cw, y0 = cy - rows / 2 * ch;
+    /* 随机内墙：竖边 (cols+1)*rows / 横边 cols*(rows+1)，p 概率立墙 */
+    const vW = [], hW = [];
+    for (let c = 0; c <= cols; c++) for (let r = 0; r < rows; r++) {
+      if (c === 0 || c === cols) continue;                 /* 外竖墙走出口逻辑 */
+      if (Math.random() < FROST2.mazeWallP) vW.push([c, r]);
+    }
+    for (let r = 0; r <= rows; r++) for (let c = 0; c < cols; c++) {
+      if (r === 0 || r === rows) continue;
+      if (Math.random() < FROST2.mazeWallP) hW.push([c, r]);
+    }
+    /* 保连通：并查集把随机墙拆到全图一格连通 */
+    const id = (c, r) => r * cols + c;
+    const pa = []; for (let i2 = 0; i2 < cols * rows; i2++) pa.push(i2);
+    const find = (a) => { while (pa[a] !== a) { pa[a] = pa[pa[a]]; a = pa[a]; } return a; };
+    const open = (c1, r1, c2, r2) => { pa[find(id(c1, r1))] = find(id(c2, r2)); };
+    for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) {
+      if (c + 1 < cols && !vW.some(w2 => w2[0] === c + 1 && w2[1] === r)) open(c, r, c + 1, r);
+      if (r + 1 < rows && !hW.some(w2 => w2[0] === c && w2[1] === r + 1)) open(c, r, c, r + 1);
+    }
+    const pull = (c1, r1, c2, r2) => {   /* 拆墙连通两格 */
+      if (c1 !== c2) { const k = vW.findIndex(w2 => w2[0] === Math.max(c1, c2) && w2[1] === r1); if (k >= 0) vW.splice(k, 1); }
+      else { const k = hW.findIndex(w2 => w2[0] === c1 && w2[1] === Math.max(r1, r2)); if (k >= 0) hW.splice(k, 1); }
+      open(c1, r1, c2, r2);
+    };
+    for (let guard = 0; guard < 400; guard++) {
+      let fixed = false;
+      for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) {
+        if (c + 1 < cols && find(id(c, r)) !== find(id(c + 1, r))) { pull(c, r, c + 1, r); fixed = true; }
+        if (r + 1 < rows && find(id(c, r)) !== find(id(c, r + 1))) { pull(c, r, c, r + 1); fixed = true; }
+      }
+      if (!fixed) break;
+    }
+    /* 外墙 + 4 个出口：竖外墙留出口格，其余封死 */
+    const exitCols = [];
+    while (exitCols.length < FROST2.mazeExits) {
+      const c = Math.floor(Math.random() * cols);
+      if (!exitCols.includes(c)) exitCols.push(c);
+    }
+    /* 上下外墙（左右侧敞开当出口）：出口列留缺口 */
+    for (let c = 0; c < cols; c++) {
+      if (exitCols.includes(c)) continue;
+      hW.push([c, 0]);
+      hW.push([c, rows]);
+    }
+    /* 墙 → 链状冰柱（复用 icePillar 碰撞与绘制） */
+    const wallRun = (x1, y1, x2, y2) => {
+      const len = Math.hypot(x2 - x1, y2 - y1), n = Math.max(2, Math.round(len / 34));
+      for (let k = 0; k <= n; k++) {
+        S.props.push({ kind: 'icePillar', x: x1 + (x2 - x1) * k / n, y: y1 + (y2 - y1) * k / n,
+          r: FROST2.mazePillarR, life: FROST2.mazeT });
+      }
+    };
+    for (const [c, r] of vW) wallRun(x0 + c * cw, y0 + r * ch, x0 + c * cw, y0 + (r + 1) * ch);
+    for (const [c, r] of hW) wallRun(x0 + c * cw, y0 + r * ch, x0 + (c + 1) * cw, y0 + r * ch);
+    S.iceMaze = { t: FROST2.mazeT, rainT: .5, x0: x0, y0: y0, w: cols * cw, h: rows * ch };
+    announce(e.bossName + ' · 冰迷宫', '被困住了——找出口出去，边走边躲冰弹', e.color, true);
+    BGM.duck(1.5);
+    SFX.alarm();
+  },
+
+  /* 中招：三角包围——三体瞬移到以玩家为质心的正三角，冰墙连边围死，
+     冰激光 + 瞄准扇弹 + 中点三角形递归细分区域攻击 ×4 轮（末轮区域≈1.5~3 倍玩家体型） */
+  triSiege(e, ph) {
+    const p = S.player;
+    const margin = FROST2.triSide / Math.sqrt(3) + 60;   /* 质心离边界的最小距离 */
+    const cx = clamp(p.x, margin, WORLD.w - margin);
+    const cy = clamp(p.y, margin, WORLD.h - margin);
+    /* 玩家在角落 → 先把玩家挤弹到中心再围 */
+    if (Math.hypot(p.x - cx, p.y - cy) > 40) {
+      p.x = cx; p.y = cy; p.inv = Math.max(p.inv, .5);
+      addRing(cx, cy, '#cfeeff', 14, 420, .5);
+    }
+    spawnFrostClones(e, 2, 99);
+    const verts = [];
+    for (let k = 0; k < 3; k++) {
+      const a = -Math.PI / 2 + k * Math.PI * 2 / 3;      /* 顶点朝上 */
+      verts.push({ x: cx + Math.cos(a) * FROST2.triSide / Math.sqrt(3), y: cy + Math.sin(a) * FROST2.triSide / Math.sqrt(3) });
+    }
+    S.tri = { phase: 'form', t: FROST2.triFormT, cx: cx, cy: cy, verts: verts, round: 0,
+      level: 1, tris: [], atk: [], warnT: 0, hitT: 0, fanT: 0, laserT: 1.2, laser: null, ph: ph };
+    announce(e.bossName + ' · 三角包围', '冰墙合围——看好哪块地砖先亮', e.color, true);
+    BGM.duck(1.6);
+    S.shake = Math.min(14, S.shake + 6);
+    SFX.alarm();
+  },
+
+  /* 大招：冰世纪——升空分三体，三块 1/3 洲各放一招（冰锥天落/微型雪崩/碎冰墙）+ 天降雨弹 */
+  iceAge(e, ph) {
+    S.iceAge = { t: 0, phase: 'fly', boss: e, x0: e.x, y0: e.y,
+      spikeT: 1.6, avaT: 2.4, mazeT: 2.0, rainT: 2.6, x0w: WORLD.w, h0w: WORLD.h };
+    announce(e.bossName + ' · 冰世纪', '它升天了——整片天都要塌下来', e.color, true);
+    BGM.duck(2.4);
     S.shake = Math.min(16, S.shake + 8);
     SFX.alarm();
   },
@@ -7122,11 +8022,21 @@ function bossThink(e, dt, dx, dy, d) {
     return;
   }
 
-  /* 0.51.0 冰原 P3 两段式：本体钉死（寒潮墙推 / 霜冠核心），招式全由 updateFrostP3 驱动 */
-  if (e.bossId === 'frost' && ph >= 3 && (S.iceWave || S.prism)) {
+  /* 0.51.0 冰原 P3 两段式 / 0.52.0 肉山冰墙 / 冰世纪：本体钉死，位置与招式全由冰原系统驱动 */
+  if (e.bossId === 'frost' && ph >= 3 && (S.iceWave || S.prism || S.flesh)) {
     e.vx = 0; e.vy = 0;
     e.timer = Math.max(e.timer, .5);
+    if (ph !== e.phase) { e.phase = ph; e.ultCd = .8; }   /* 钉死分支也要推阶段（否则狂暴永远不来） */
     return;
+  }
+  if (e.bossId === 'frost' && S.iceAge) {
+    e.vx = 0; e.vy = 0;
+    e.timer = Math.max(e.timer, .5);
+    if (ph !== e.phase) { e.phase = ph; }
+    return;   /* 升空演出：位置由 updateIceAge 驱动 */
+  }
+  if (e.bossId === 'frost' && (S.tri || S.frostQueue)) {
+    e.vx = 0; e.vy = 0;   /* 阵型阶段：位置由阵型系统驱动，普通 AI 不插手 */
   }
 
   /* 合击错拍：后手延迟一点点放，叠出层次 */
@@ -7805,8 +8715,11 @@ function update(dt) {
     if (onIce(p.x, p.y)) { iceMul = GLACIER.spdBoost; S.iceGlide = 0; }
     else if (S.iceGlide > 0) { glK = S.iceGlide / GLACIER.glideT; S.iceGlide -= dt; }
   }
-  p.x = clamp(p.x + ix * st.speed * pm * iceMul * dt + (p.gvx || 0) * glK * dt, p.r, WORLD.w - p.r);
-  p.y = clamp(p.y + iy * st.speed * pm * iceMul * dt + (p.gvy || 0) * glK * dt, p.r, WORLD.h - p.r);
+  /* 0.52.0 雪崩庇护所加速拾取：移速 ×1.4，持续 15 秒 */
+  const pickMul = (p.spdBoostT > 0) ? FROST2.spdPickMul : 1;
+  if (p.spdBoostT > 0) p.spdBoostT -= dt;
+  p.x = clamp(p.x + ix * st.speed * pm * iceMul * pickMul * dt + (p.gvx || 0) * glK * dt, p.r, WORLD.w - p.r);
+  p.y = clamp(p.y + iy * st.speed * pm * iceMul * pickMul * dt + (p.gvy || 0) * glK * dt, p.r, WORLD.h - p.r);
   /* 冰上的速度记下来供滑行用；离冰滑行期间速度跟着衰减 */
   if (iceMul > 1 && (ix || iy)) { p.gvx = ix * st.speed * pm * iceMul; p.gvy = iy * st.speed * pm * iceMul; }
   else { p.gvx = (p.gvx || 0) * Math.exp(-6 * dt); p.gvy = (p.gvy || 0) * Math.exp(-6 * dt); }
@@ -8461,6 +9374,7 @@ function drawIceFx() {
     ctx.fillStyle = 'rgba(235,250,255,' + (.5 * fade).toFixed(2) + ')';
     ctx.fill();
   }
+  drawFrost2();   /* 0.52.0 冰原二番重做：分身/雪崩/迷宫/三角/冰世纪/肉山/拾取 */
 
   /* 冰川纪压轴预警圈 */
   if (S.iceBoom) {
@@ -10905,6 +11819,14 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.0', d: '11-08', t: '冰原领主二番重做：控制/走位/地图控制', items: [
+    '小招×6：冰墙/霜封/冰锥天落/滑步突进/冰凌跃迁照旧 + 冰镜分身新版（照镜走出第二个自己，10秒配合攻击）',
+    '连招×2：分身跃迁到处喷射（四体乱闪5轮+环形弹幕）/ 三分身排队冲撞（玩家当收银台，最远先冲，2.66轮末轮本体免冲）',
+    '中招×3：雪崩（全屏下压+庇护所+加速冰晶）/ 冰迷宫（以玩家为中心困住，多出口边走边躲弹）/ 三角包围（冰墙合围+中点三角形细分区域轰炸×4轮）',
+    '大招冰世纪：升空分三体、三块冰之领域、三块1/3洲各放一招（冰锥天落/微型雪崩/碎冰墙）+ 天降雨弹',
+    'P3：寒潮墙推保留 → 新增肉山冰墙（右边界三喷口+分区效果+冰晶拾取削血7%×3 → 虚弱6秒站桩，未击杀循环）',
+    'P1=(小×2→连)×2套→中招；P2=三中招各一次→大招；原霜冠（prism）休眠退役',
+  ] },
   { v: '0.51.5', d: '11-08', t: '炎兽游钻：冲完立刻再钻，删掉停顿', items: [
     '终极形态冲撞结束直接钻回地下——删掉冲完 0.9 秒的浮出停顿窗口，不给玩家时间打',
     '节奏变成：钻地游走 → 破土直冲 → 落地瞬间再钻，全程速度与激情',
@@ -11446,6 +12368,10 @@ const ATK_INFO = {
   slideDash:  { name: '滑步突进', demo: 'charge', desc: '贴地滑行撞人，路径结冰——横移让过滑行线' },
   iceSkate:   { name: '滑冰突进', demo: 'charge', desc: '只在冰面上借力加速——把它引到裸地它就滑不动' },
   iceBlink:   { name: '冰棱跃迁', demo: 'blink', desc: '化冰棱瞬移，落地一圈霜环——落点有白环预警' },
+  frostPrison:{ name: '霜封',     demo: 'wall',  desc: '脚下亮圈 0.9 秒后冰柱封死那个点——别在圈里恋战' },
+  mirrorClone:{ name: '冰镜分身', demo: 'blink', desc: '照一下冰面镜子，镜里走出第二个它——10 秒配合攻击，分身弹幕减半' },
+  blinkSpray: { name: '跃迁喷射', demo: 'blink', desc: '四体乱闪 5 轮，每次落地一圈环形弹——盯住离你最近那个' },
+  queueCharge:{ name: '排队冲撞', demo: 'charge', desc: '玩家当收银台它们排队撞：最远的先来，一个接一个，末轮本体免冲' },
   slideCombo: { name: '滑铲连',   demo: 'charge', desc: '滑步撞→霜环→脚下落锥，三拍连招别站桩' },
   wallPocket: { name: '冰墙口袋', demo: 'wall',  desc: '封一侧撞另一侧、退路结冰、霜封封死——提前找缺口' },
   blink:      { name: '瞬移',     demo: 'blink', desc: '闪到你身边立刻糊脸一圈——落点有紫环预警' },
