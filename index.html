@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.52.1
+   幸存者 · 极简版  v0.52.2
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -4825,11 +4825,11 @@ function startIceWave(e) {
 function frostBoss() {
   return S.bosses.find(b => b.bossId === 'frost' && !b.clone && b.hp > 0) || null;
 }
-function spawnFrostClones(e, n, ttl) {
+function spawnFrostClones(e, n, ttl, atBoss) {
   for (let k = 0; k < n; k++) {
     S.frostClones.push({
-      x: clamp(e.x + rnd(-160, 160), 50, WORLD.w - 50),
-      y: clamp(e.y + rnd(-160, 160), 50, WORLD.h - 50),
+      x: atBoss ? e.x : clamp(e.x + rnd(-160, 160), 50, WORLD.w - 50),
+      y: atBoss ? e.y : clamp(e.y + rnd(-160, 160), 50, WORLD.h - 50),
       r: 26, ttl: ttl, gun: false, gunT: 1,
     });
     addRing(S.frostClones[S.frostClones.length - 1].x, S.frostClones[S.frostClones.length - 1].y, '#cfeeff', 8, 420, .4);
@@ -4925,16 +4925,37 @@ function updateFrostClones(dt) {
   }
 }
 
-/* 排队冲撞：far→mid→boss 轮流冲，2.66 轮（末轮本体不冲） */
+/* 排队冲撞：开场收银台排队（成形动画滑出）→ 连续轮流冲：
+   每次起冲锁定玩家当前位置，冲程 = 玩家与该体的实际距离（不设上限），
+   冲撞带滑步突进特性——贴地滑行、路径留冰面；撞完一个换下一个 */
 function updateFrostQueue(dt) {
   const Q = S.frostQueue; if (!Q) return;
   const e = frostBoss(); if (!e) { S.frostQueue = null; return; }
+  /* 成形动画：分身从本体身上滑出来到各自站位（三个 boss 伸出来） */
+  if (Q.formT > 0) {
+    Q.formT -= dt;
+    const k = 1 - Math.max(0, Q.formT) / Q.formT0;
+    for (let s2 = 0; s2 < 2; s2++) {
+      const c = S.frostClones[s2];
+      if (c) {
+        c.x = Q.bx0 + (Q.slots[s2].x - Q.bx0) * k;
+        c.y = Q.by0 + (Q.slots[s2].y - Q.by0) * k;
+        if (Math.random() < .4) addPart(c.x, c.y, '#cfeeff', 90, 2.5);
+      }
+    }
+    if (Q.formT <= 0) Q.t = .3;
+    return;
+  }
   if (Q.cur) {
     const u = Q.cur; u.t -= dt;
     const who = u.slot === 0 ? e : S.frostClones[u.slot - 1];
-    if (who) {
-      who.x = clamp(who.x - Q.ux * FROST2.queueDashSpd * dt, 30, WORLD.w - 30);
-      who.y = clamp(who.y - Q.uy * FROST2.queueDashSpd * dt, 30, WORLD.h - 30);
+    if (who && u.dur > 0) {
+      const p2 = 1 - Math.max(0, u.t) / u.dur;
+      who.x = u.x0 + (u.tx - u.x0) * p2;
+      who.y = u.y0 + (u.ty - u.y0) * p2;
+      /* 滑步突进特性：贴地滑行，路径留冰面 + 冰尘 */
+      u.tileT = (u.tileT || 0) - dt;
+      if (u.tileT <= 0) { u.tileT = .05; addIceTile(who.x, who.y, GLACIER.tileR * .9); }
       if (Math.random() < .5) addPart(who.x, who.y, '#cfeeff', 90, 2.5);
       if (!u.hit && Math.hypot(S.player.x - who.x, S.player.y - who.y) < (who.r + S.player.r + 4)) {
         u.hit = true;
@@ -4942,7 +4963,7 @@ function updateFrostQueue(dt) {
         S.shake = Math.min(14, S.shake + 5);
       }
     }
-    if (u.t <= 0) Q.cur = null;
+    if (u.t <= 0) { Q.cur = null; Q.t = FROST2.queueGap; }
     return;
   }
   Q.t -= dt;
@@ -4955,11 +4976,15 @@ function updateFrostQueue(dt) {
     const slot = Q.order[Q.i++];
     const who = slot === 0 ? e : S.frostClones[slot - 1];
     if (who) {
+      /* 起冲瞬间锁玩家当前位置：玩家多远就撞多远 */
+      const p = S.player;
+      const dx = p.x - who.x, dy = p.y - who.y, d = Math.hypot(dx, dy) || 1;
+      Q.cur = { slot: slot, t: d / FROST2.queueDashSpd, dur: d / FROST2.queueDashSpd,
+        x0: who.x, y0: who.y, tx: p.x, ty: p.y, hit: false, tileT: 0 };
       addRing(who.x, who.y, '#cfeeff', 10, 460, .3);
-      announce('冲锋 ' + (Q.i) + '/' + Q.order.length, slot === 0 ? '本体来了！' : '分身来了！', '#7fe0ff', false);
+      announce('冲锋 ' + Q.i + '/' + Q.order.length, slot === 0 ? '本体来了！' : '分身来了！', '#7fe0ff', false);
       SFX.zap();
     }
-    Q.cur = { slot: slot, t: FROST2.queueDashT, hit: false };
     Q.t = FROST2.queueGap;
   }
 }
@@ -5091,15 +5116,23 @@ function updateIceAge(dt) {
     e.y = A.y0 + (-90 - A.y0) * k;
     if (A.t >= FROST2.ageFlyT) {
       A.phase = 'domain'; A.pt = 0;
-      A.anchors = [{ x: W * .25, y: -40 }, { x: W * .5, y: -40 }, { x: W * .75, y: -40 }];
+      /* 三个 boss 横排：本体居中，两个分身各占 1/6 与 5/6（都在天上可见） */
+      A.anchors = [{ x: W * (1 / 6), y: -50 }, { x: W * .5, y: -55 }, { x: W * (5 / 6), y: -50 }];
+      spawnFrostClones(e, 2, 99, true);
+      if (S.frostClones.length >= 2) {
+        const c1 = S.frostClones[S.frostClones.length - 2], c2 = S.frostClones[S.frostClones.length - 1];
+        c1.x = A.anchors[0].x; c1.y = A.anchors[0].y; c1.sky = true;
+        c2.x = A.anchors[2].x; c2.y = A.anchors[2].y; c2.sky = true;
+      }
       for (const a of A.anchors) addRing(a.x, a.y + 60, '#cfeeff', 22, 900, .9);
-      announce('冰之领域', '三块大陆同时结冰——没有伤害，但接下来呢？', '#cfeeff', true);
+      announce('冰之领域', '三个它同时升天——三块大陆同时结冰', '#cfeeff', true);
       SFX.kill();
     }
     return;
   }
   if (A.phase === 'domain') {
     A.pt = (A.pt || 0) + dt;
+    for (const c of S.frostClones) if (c.sky) c.y = -50 + Math.sin(S.t * 2) * 6;
     if (Math.random() < .5) {
       const a = A.anchors[Math.floor(Math.random() * 3)];
       addIceTile(a.x + rnd(-W / 6, W / 6), rnd(80, H - 80), GLACIER.tileR * 1.6, Infinity);
@@ -5109,7 +5142,8 @@ function updateIceAge(dt) {
   }
   if (A.phase === 'atk') {
     A.pt += dt;
-    /* 左洲：冰锥天落 */
+    for (const c of S.frostClones) if (c.sky) c.y = -55 + Math.sin(S.t * 2) * 6;
+    /* 左洲：冰锥天落（左分身主施） */
     A.spikeT -= dt;
     if (A.spikeT <= 0) {
       A.spikeT = FROST2.ageSpikeCd;
@@ -5117,17 +5151,18 @@ function updateIceAge(dt) {
       for (let k = 0; k < 5; k++) {
         S.iceFall.push({ x: rnd(30, W / 3), y: rnd(40, H - 40), r: 40, t: .55 + k * .05, dmg: 14 });
       }
+      if (A.anchors[0]) addRing(A.anchors[0].x, A.anchors[0].y + 40, '#cfeeff', 10, 380, .4);
     }
-    /* 中洲：微型雪崩（带状下扫，仅中 1/3 有效） */
+    /* 中洲：微型雪崩（带状下扫，仅中 1/3 有效）——本体主施 */
     A.avaT -= dt;
-    if (A.avaT <= 0) { A.avaT = FROST2.ageAvaCd; A.avaY = 0; }
+    if (A.avaT <= 0) { A.avaT = FROST2.ageAvaCd; A.avaY = 0; if (A.anchors[1]) addRing(A.anchors[1].x, A.anchors[1].y + 40, '#cfeeff', 10, 380, .4); }
     if (A.avaY !== undefined && A.avaY !== null) {
       A.avaY += 260 * dt;
       if (p.x > W / 3 && p.x < W * 2 / 3 && Math.abs(p.y - A.avaY) < 70) damagePlayerEnv(12, p.x, p.y);
       if (Math.random() < .7) addPart(rnd(W / 3, W * 2 / 3), A.avaY - rnd(0, 70), '#ffffff', 130, 2.5);
       if (A.avaY > H + 60) A.avaY = null;
     }
-    /* 右洲：碎冰墙（随机冰柱簇） */
+    /* 右洲：碎冰墙（随机冰柱簇）——右分身主施 */
     A.mazeT -= dt;
     if (A.mazeT <= 0) {
       A.mazeT = FROST2.ageMazeCd;
@@ -5135,6 +5170,7 @@ function updateIceAge(dt) {
       for (let k = 0; k < 4; k++) {
         S.props.push({ kind: 'icePillar', x: bx + rnd(-70, 70), y: by + rnd(-50, 50), r: 26, life: 3.2 });
       }
+      if (A.anchors[2]) addRing(A.anchors[2].x, A.anchors[2].y + 40, '#cfeeff', 10, 380, .4);
     }
     /* 天降雨弹：垂直于上边界落下 */
     A.rainT -= dt;
@@ -5150,10 +5186,20 @@ function updateIceAge(dt) {
     const k = Math.min(1, A.pt / FROST2.ageEndT);
     const tx = clamp(p.x + rnd(-260, 260), 60, W - 60), ty = clamp(p.y + rnd(-260, 260), 60, H - 60);
     e.x = A.bx0 + (tx - A.bx0) * k;
-    e.y = A.by0 + (-90 - A.by0) * (1 - k) + (ty + 90) * 0;   /* 从天上落回 */
-    e.y = A.by0 + ((-90) - A.by0) * (1 - k) + (ty - (-90)) * 0;
-    e.y = A.by0 + (ty - A.by0) * k;                           /* 直接插值回场 */
-    if (A.pt >= FROST2.ageEndT) { e.x = tx; e.y = ty; addRing(e.x, e.y, e.color, 16, 700, .5); S.iceAge = null; }
+    e.y = A.by0 + (ty - A.by0) * k;                           /* 从天上落回场内 */
+    /* 天上两个分身跟着落回场内，落地淡出 */
+    const skies = S.frostClones.filter(c => c.sky);
+    for (let i2 = 0; i2 < skies.length; i2++) {
+      const c = skies[i2];
+      const sx = A.anchors[i2 === 0 ? 0 : 2].x, sy = A.anchors[i2 === 0 ? 0 : 2].y;
+      const gx = clamp(p.x + (i2 === 0 ? -240 : 240), 60, W - 60), gy = clamp(p.y + rnd(-120, 120), 60, H - 60);
+      c.x = sx + (gx - sx) * k; c.y = sy + (ty - sy) * k;
+    }
+    if (A.pt >= FROST2.ageEndT) {
+      e.x = tx; e.y = ty; addRing(e.x, e.y, e.color, 16, 700, .5);
+      for (const c of skies) { c.ttl = 1.2; c.sky = false; }   /* 分身落地淡出 */
+      S.iceAge = null;
+    }
     return;
   }
 }
@@ -6018,27 +6064,29 @@ const ATK = {
     SFX.alarm();
   },
 
-  /* 连招：三分身排队冲撞——玩家是收银台，BOSS 带分身沿延长线排队，
-     离玩家最远的先冲，一轮 far→mid→near(boss)，撞 2.66 轮（末轮本体不冲） */
+  /* 连招：三分身排队冲撞——开场像收银台排队（三体沿延长线滑出站位），
+     之后连续轮流冲：每次起冲锁定玩家当前位置，冲程=玩家与该体的距离（不设上限），
+     冲撞带滑步突进特性：贴地滑行、路径留冰面。撞完一个换下一个，far→mid→boss 循环 */
   queueCharge(e, ph) {
-    spawnFrostClones(e, 2, 99);
+    spawnFrostClones(e, 2, 99, true);   /* 分身从本体身上长出来（成形动画滑到站位） */
     const p = S.player;
     const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy) || 1;
     const ux = dx / d, uy = dy / d;
-    /* 排队：boss 最近（slot0），分身沿延长线排后（slot1/2）；冲锋顺序 far→mid→boss */
     e.x = clamp(p.x + ux * 300, 50, WORLD.w - 50); e.y = clamp(p.y + uy * 300, 50, WORLD.h - 50);
-    if (S.frostClones[0]) { S.frostClones[0].x = clamp(p.x + ux * 500, 50, WORLD.w - 50); S.frostClones[0].y = clamp(p.y + uy * 500, 50, WORLD.h - 50); }
-    if (S.frostClones[1]) { S.frostClones[1].x = clamp(p.x + ux * 700, 50, WORLD.w - 50); S.frostClones[1].y = clamp(p.y + uy * 700, 50, WORLD.h - 50); }
+    const slots = [
+      { x: clamp(p.x + ux * 500, 50, WORLD.w - 50), y: clamp(p.y + uy * 500, 50, WORLD.h - 50) },
+      { x: clamp(p.x + ux * 700, 50, WORLD.w - 50), y: clamp(p.y + uy * 700, 50, WORLD.h - 50) },
+    ];
     const order = [];
     const nCharges = Math.round(FROST2.queueRounds * 3);       /* 8 次 */
     for (let k = 0; k < nCharges; k++) {
-      const round = Math.floor(k / 3), pos = k % 3;            /* 每轮 far→mid→boss */
+      const pos = k % 3;                                       /* 每轮 far→mid→boss */
       if (pos === 2 && k >= nCharges - 1) continue;            /* 末轮本体不冲（.66 轮） */
-      const slot = 2 - pos;                                    /* pos0=最远=slot2 */
-      order.push(slot);
+      order.push(2 - pos);                                     /* pos0=最远=slot2 */
     }
-    S.frostQueue = { order: order, i: 0, t: FROST2.queueGap, ux: ux, uy: uy, ph: ph };
-    announce(e.bossName + ' · 排队冲撞', '它们在排队撞你——最远的先来，一个接一个', e.color, true);
+    S.frostQueue = { order: order, i: 0, t: 0, ux: ux, uy: uy, ph: ph,
+      formT: .55, formT0: .55, bx0: e.x, by0: e.y, slots: slots, cur: null };
+    announce(e.bossName + ' · 排队冲撞', '三个排开轮流冲——冲程不设上限，往哪儿躲都要吃一次滑铲', e.color, true);
     SFX.alarm();
   },
 
@@ -11852,6 +11900,11 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.2', d: '11-08', t: '冰世纪天降三体 + 排队冲撞重做', items: [
+    '冰世纪：升空的现在是三个 boss（本体居中 + 两分身各占 1/6、5/6），各自施放自己那 1/3 洲的招，结束一起落回场内淡出',
+    '排队冲撞重做：开场收银台排队只是站位——之后连续轮流冲，每次起冲锁定玩家当前位置，冲程=玩家与该体的实际距离（不设上限）',
+    '排队冲撞带滑步突进特性：贴地滑行、路径留冰面；成形动画三个 boss 从本体身上滑出来排开',
+  ] },
   { v: '0.52.1', d: '11-08', t: '冰镜分身渲染修正：分身长BOSS样', items: [
     '分身不再是一个冰圈——改用 BOSS 本体渲染（同款水晶造型，半透明+虚线冰晶描边区分）',
     '镜子立在场上一直到分身消失；照镜阶段镜面里有 BOSS 倒影越照越清晰',
