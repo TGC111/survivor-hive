@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.52.3
+   幸存者 · 极简版  v0.52.4
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -1991,10 +1991,11 @@ const FROST2 = {
   /* —— 连招：分身跃迁到处喷射 —— */
   sprayN: 5,           // 跃迁次数（4-5 次）
   sprayGap: .78,       // 每次跃迁间隔
-  sprayRing: 14,       // 每次环形弹幕颗数（本体）
+  sprayRing: 7,        // 每次环形弹幕颗数（本体，0.52.4 用户：太密躲不过，14→7 减半）
+  sprayCloneRing: 5,   // 每次环形弹幕颗数（分身，原硬编码 9 → 5）
   sprayTtl: 6.5,       // 分身寿命
   /* —— 连招：三分身排队冲撞 —— */
-  queueGap: .95,       // 两次冲撞间隔
+  queueGap: .40,       // 两次冲撞间隔（0.52.4 用户：撞完到下一下等太久、没压力，.95→.40；调试台可调）
   queueDashT: .55,     // 单次冲撞时长（已被「冲程=实际距离」取代，留作兼容）
   queueDashSpd: 900,   // 冲撞速度（0.52.3 用户：太慢，至少对齐荒原 760/900）
   queueWind: .3,       // 起冲前摇秒数（细冰线预告落点——900 速度必须给看得见的预告）
@@ -2009,9 +2010,9 @@ const FROST2 = {
   avaShelters: 3,      // 庇护所数量
   avaShelterR: 150,    // 庇护所半径
   /* —— 中招：冰迷宫 —— */
-  mazeCell: 118,       // 迷宫格边长
-  mazeCols: 8,         // 横向格数
-  mazeRows: 5,         // 纵向格数
+  mazeCell: 135,       // 迷宫格边长（0.52.4 用户：再大一点；118→135）
+  mazeCols: 10,        // 横向格数（8→10）
+  mazeRows: 7,         // 纵向格数（5→7）
   mazeT: 9,            // 迷宫存续秒数
   mazeWallP: .42,      // 内部墙概率（生成后保连通）
   mazeExits: 4,        // 外墙出口数
@@ -2023,7 +2024,7 @@ const FROST2 = {
   triWarn: .7,         // 区域攻击预警秒数
   triHit: .55,         // 区域伤害持续秒数
   triGap: .35,         // 两轮间隔
-  triRounds: 4,        // 细分攻击轮数（末轮区域≈1.5~3 倍玩家体型）
+  triRounds: 3,        // 细分攻击轮数（0.52.4 用户：末轮小块塞不下人；4→3 块边长 77.5px ≈ 玩家 2.8 倍）
   triDmg: 18,          // 区域内每跳伤害
   triFanCd: 1.2,       // 三体瞄准冰扇节奏
   triLaserCd: 2.1,     // 冰激光节奏（细线预警后沿线灼烧）
@@ -2136,6 +2137,28 @@ const BURROW_TUNE = {
 })();
 function burrowSave() {
   try { localStorage.setItem('sv_burrow', JSON.stringify(BURROW_TUNE)); } catch (e) { }
+}
+
+/* 0.52.4 冰原手感可调（BOSS 调试台滑杆实时改，存 sv_frost 本机）：
+   用户点名要「排队冲撞的等待时间 + 冲刺速度」上台，顺手把重招节奏两根也放上来。
+   改的是 FROST2 本体（运行时直接读到），恢复默认删 sv_frost 或点面板里的恢复。 */
+const FROST_TUNE_KEYS = ['queueGap', 'queueDashSpd', 'queueWind', 'heavyRest', 'heavySmallGap'];
+const FROST2_DEF = {};
+FROST_TUNE_KEYS.forEach(k => { FROST2_DEF[k] = FROST2[k]; });
+(function frostTuneLoad() {
+  try {
+    const d = JSON.parse(localStorage.getItem('sv_frost') || 'null');
+    if (d) FROST_TUNE_KEYS.forEach(k => { if (typeof d[k] === 'number' && d[k] > 0) FROST2[k] = d[k]; });
+  } catch (e) { }
+})();
+function frostTuneSave() {
+  const o = {};
+  FROST_TUNE_KEYS.forEach(k => { o[k] = FROST2[k]; });
+  try { localStorage.setItem('sv_frost', JSON.stringify(o)); } catch (e) { }
+}
+function frostTuneReset() {
+  FROST_TUNE_KEYS.forEach(k => { FROST2[k] = FROST2_DEF[k]; });
+  try { localStorage.removeItem('sv_frost'); } catch (e) { }
 }
 /* 逃离校验：能不能在最慢移速下横移出冲撞带 */
 function burrowEscapeCheck() {
@@ -4760,6 +4783,8 @@ function frostSequence(e, def, ph) {
      闸门关着 → 只出小招暖场（用户原话：雪崩放完没事可以先放点小招，
      但三个中招都是困住性的，不能叠着放）。 */
   if (frostHeavyStep(step, def) && !frostHeavyReady()) {
+    /* 0.52.4 用户：排队冲撞期间别再放小招——这一招就是纯「轮流撞你」的压力 */
+    if (S.frostQueue) { e.timer = .2; return; }
     frostSmall(e, def, ph, true);
     return;
   }
@@ -5125,14 +5150,14 @@ function updateTriSiege(dt) {
   }
   /* 攻击循环：预警 → 伤害 → 细分下一层 */
   T.fanT -= dt; T.laserT -= dt;
-  if (T.fanT <= 0) {
+  if (T.fanT <= 0 && units.length) {
     T.fanT = FROST2.triFanCd;
-    for (const u of units) {
-      const base = Math.atan2(S.player.y - u.y, S.player.x - u.x);
-      for (let k = -2; k <= 2; k++) {
-        shootEnemyBullet(u, S.player, base + k * .17, 240, 10,
-          { color: '#cfeeff', kind: 'ice', r: 6, life: 2.2, ox: u.x, oy: u.y, frostAdd: 10 });
-      }
+    /* 0.52.4 用户：三个头不许同时发散弹——每次只挑一个头射（三面一起来没法躲） */
+    const u = units[Math.floor(Math.random() * units.length)];
+    const base = Math.atan2(S.player.y - u.y, S.player.x - u.x);
+    for (let k = -2; k <= 2; k++) {
+      shootEnemyBullet(u, S.player, base + k * .17, 240, 10,
+        { color: '#cfeeff', kind: 'ice', r: 6, life: 2.2, ox: u.x, oy: u.y, frostAdd: 10 });
     }
   }
   if (T.laserT <= 0 && units.length) {
@@ -6146,7 +6171,7 @@ const ATK = {
           const cl = S.frostClones[c];
           cl.x = spots[c + 1].x; cl.y = spots[c + 1].y;
           addRing(cl.x, cl.y, '#cfeeff', 8, 480, .35);
-          ringShot(cl, ph, 9, 185, 6, '#cfeeff', 'ice', Math.random() * RAD, { frostAdd: 10 });
+          ringShot(cl, ph, FROST2.sprayCloneRing, 185, 6, '#cfeeff', 'ice', Math.random() * RAD, { frostAdd: 10 });
         }
         S.shake = Math.min(12, S.shake + 4);
         SFX.zap();
@@ -11994,6 +12019,14 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.4', d: '11-08', t: '冰原：冲撞催命 + 喷射减半 + 三角留活路', items: [
+    '排队冲撞不再磨叽：两次冲撞的等待 0.95→0.40 秒（撞完马上换下一个），撞的时候不再夹小招——这一招就是纯轮流撞你',
+    '排队冲撞的「等待时间」和「冲刺速度」搬进 BOSS 调试台滑杆（冰原那页），随手就能调；重招节奏两根也一起上台',
+    '跃迁喷射减密：每次落地环弹 14→7、分身 9→5（约减半）——原来四面开花根本躲不掉',
+    '三角包围：三个头不再同时发散弹，每次只挑一个头射',
+    '三角包围细分 4 轮→3 轮：最后一块地砖边长 77.5px ≈ 玩家的 2.8 倍，终于站得下人了（原来 38px 塞不进人，等于必中）',
+    '冰迷宫放大：格 118→135、8×5 格 → 10×7 格（约 2.3 倍面积），跑动空间和出口都宽松了',
+  ] },
   { v: '0.52.3', d: '11-08', t: '冰原：重招不再流水线 + 冲撞提速', items: [
     '重招闸门：大招/连招/中招同一时间只准一个在场，必须等它彻底演完（雪崩压完、迷宫拆完、三角打完、冰世纪落地）才准起下一个',
     '重招收场后先空一拍、补一手小招，再起下一个重招——不会再出现「雪崩还没躲完三角包围就合围」',
@@ -13171,6 +13204,7 @@ function devVal(tag) {
   const p = tag.split(':');
   if (p[0] === 'dev') return DEV[p[1]];
   if (p[0] === 'btr') return BURROW_TUNE[p[1]];   /* 0.51.1 炎兽游钻手感 */
+  if (p[0] === 'fst') return FROST2[p[1]];        /* 0.52.4 冰原手感 */
   if (p[0] === 'beha') {
     const b = BEHA[DEV_TAB];
     return (b && b[p[1]] !== undefined) ? b[p[1]] : devDefVal(p[1]);
@@ -13186,6 +13220,7 @@ function devSet(tag, v) {
   const p = tag.split(':');
   if (p[0] === 'dev') DEV[p[1]] = v;
   else if (p[0] === 'btr') { BURROW_TUNE[p[1]] = v; burrowSave(); }   /* 0.51.1 游钻手感存本机 */
+  else if (p[0] === 'fst') { FROST2[p[1]] = v; frostTuneSave(); }     /* 0.52.4 冰原手感存本机 */
   else if (p[0] === 'beha') { (BEHA[DEV_TAB] = BEHA[DEV_TAB] || {})[p[1]] = v; }
   else if (p[0] === 'tune') { tuneOf(p[1])[p[2]] = v; }
   saveDev();
@@ -13195,7 +13230,8 @@ function devFmt(tag, v) {
   if (tag === 'beha:keep') return Math.round(v) + 'px';
   if (tag.indexOf('btr:r') === 0 || tag === 'btr:shrink') return Math.round(v) + 'px';
   if (tag === 'btr:chargeT') return v.toFixed(2) + 's';
-  if (tag === 'btr:spd') return Math.round(v) + 'px/s';
+  if (tag === 'btr:spd' || tag === 'fst:queueDashSpd') return Math.round(v) + 'px/s';
+  if (tag === 'fst:queueGap' || tag === 'fst:queueWind' || tag === 'fst:heavyRest' || tag === 'fst:heavySmallGap') return v.toFixed(2) + 's';
   if (tag === 'beha:restMode') return ['自动', '喘息', '压近', '拉扯', '弧步', '拉开'][Math.round(v)] || '自动';
   if (tag === 'beha:spd' || tag === 'beha:chain' || tag === 'beha:mood') return Math.round(v * 100) + '%';
   if (tag.indexOf('beha:') === 0) return v.toFixed(2) + 's';
@@ -13272,6 +13308,21 @@ function devHTML() {
     h += burrowCheckHTML();
   }
 
+  /* 0.52.4 冰原专属：排队冲撞手感 + 重招节奏（用户点名要能调「等待时间」和「冲刺速度」） */
+  if (DEV_TAB === 'frost') {
+    h += '<h3>冰原手感 <time>排队冲撞 / 重招节奏（存本机）</time></h3>' +
+      '<div class="avtip">排队冲撞：撞完一个到下一下起冲的等待 + 冲刺速度。拉等待越小越催命，拉速度越大越难躲（有 0.3s 细线前摇兜底）。</div>';
+    [['queueGap', '冲撞等待', .1, 1.6, .05, 100],
+     ['queueDashSpd', '冲撞速度', 400, 1800, 25, 1],
+     ['queueWind', '起冲前摇', .1, .8, .05, 100],
+     ['heavyRest', '重招收场喘息', 0, 3, .1, 100],
+     ['heavySmallGap', '重招期间小招节奏', .5, 3, .1, 100]].forEach(it => {
+      h += devRow('fst:' + it[0], it[1], FROST2[it[0]], it[2], it[3], it[4], it[5]);
+    });
+    h += '<div class="setrow"><span>本家手感恢复默认</span>' +
+      '<button class="filbtn" data-rst="frost">恢复</button></div>';
+  }
+
   h += '<h3>招式倍率 <time>点开单招，调前摇 / 伤害 / 范围</time></h3>';
   const mvs = devMovesOf(DEV_TAB);
   if (!mvs.length) h += '<div class="avtip">这家还没有招表</div>';
@@ -13325,6 +13376,8 @@ function wireDevBody() {
     } else if (what === 'boss') {
       delete BEHA[DEV_TAB];
       devMovesOf(DEV_TAB).forEach(mv => { delete TUNE[mv]; });
+    } else if (what === 'frost') {
+      frostTuneReset();
     }
     saveDev();
     body.innerHTML = devHTML();
