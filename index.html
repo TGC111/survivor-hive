@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.52.2
+   幸存者 · 极简版  v0.52.3
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -1995,8 +1995,9 @@ const FROST2 = {
   sprayTtl: 6.5,       // 分身寿命
   /* —— 连招：三分身排队冲撞 —— */
   queueGap: .95,       // 两次冲撞间隔
-  queueDashT: .55,     // 单次冲撞时长
-  queueDashSpd: 680,   // 冲撞速度
+  queueDashT: .55,     // 单次冲撞时长（已被「冲程=实际距离」取代，留作兼容）
+  queueDashSpd: 900,   // 冲撞速度（0.52.3 用户：太慢，至少对齐荒原 760/900）
+  queueWind: .3,       // 起冲前摇秒数（细冰线预告落点——900 速度必须给看得见的预告）
   queueSlotGap: 200,   // 排队间距（沿延长线）
   queueDmg: 22,        // 冲撞接触伤害
   queueRounds: 2.66,   // 总轮数（2.66 轮 = 8 冲，末轮本体免冲）
@@ -2051,6 +2052,9 @@ const FROST2 = {
   /* —— 拾取 —— */
   spdPickMul: 1.4,     // 雪崩庇护所加速拾取：移速 ×1.4
   spdPickT: 15,        // 加速持续秒数
+  /* —— 重招闸门（0.52.3 用户口述：大招/连招/中招不能同时放）—— */
+  heavyRest: 1.1,      // 上一个重招彻底收场后，至少等这么久才准起下一个重招
+  heavySmallGap: 1.5,  // 重招占场期间小招暖场的节奏倍率（× bossGap）
 };
 
 /* ---------- 狂潮模式参数 ----------
@@ -2291,6 +2295,7 @@ function startArena() {
   S.props.length = 0; S.hiveGrab = null;
   S.frostClones.length = 0; S.frostQueue = null; S.avalanche = null;
   S.iceMaze = null; S.tri = null; S.iceAge = null; S.flesh = null;
+  S.frostGate = null;                    /* 0.52.3 重招闸门复位 */
   S.player.spdBoostT = 0;
   S.bossQueue.length = 0; S.rushBossT = 1e9; S.rushEliteT = 1e9; S.bossCap = 0;
   S.arenaDead = 0;
@@ -4750,7 +4755,15 @@ function frostSequence(e, def, ph) {
   }
   if (e.readCd <= 0 && (diff().read || 0) > 0 && e.pProfile) { if (castRead(e, def, ph)) return; }
   if (!e.fseq || e.fseq.i >= e.fseq.q.length) e.fseq = frostBuild(e, ph);
-  const step = e.fseq.q[e.fseq.i++];
+  const step = e.fseq.q[e.fseq.i];                 /* 只「看」队首，真正放出来才出队 */
+  /* 0.52.3 重招闸门：大招/连招/中招一次只准一个在地图上。
+     闸门关着 → 只出小招暖场（用户原话：雪崩放完没事可以先放点小招，
+     但三个中招都是困住性的，不能叠着放）。 */
+  if (frostHeavyStep(step, def) && !frostHeavyReady()) {
+    frostSmall(e, def, ph, true);
+    return;
+  }
+  e.fseq.i++;
   if (step.mid) {
     const info = ULT_INFO[step.mid] || { name: step.mid, sub: '' };
     announce(e.bossName + ' · ' + info.name, info.sub, e.color, true);
@@ -4758,6 +4771,7 @@ function frostSequence(e, def, ph) {
     castMove(step.mid, ULT[step.mid], e, ph);
     e.casting = Math.max(e.casting, 1.2);
     e.timer = bossGap(e, def) * 1.5;
+    frostHeavyStart();
   } else if (step.ult) {
     const info = ULT_INFO[def.ult] || { name: def.ult, sub: '' };
     announce(e.bossName + ' · ' + info.name, info.sub, e.color, true);
@@ -4765,10 +4779,63 @@ function frostSequence(e, def, ph) {
     castMove(def.ult, ULT[def.ult], e, ph);
     e.casting = Math.max(e.casting, 2.5);
     e.timer = bossGap(e, def) * 1.9;
+    frostHeavyStart();
   } else {
     castMove(step, ATK[step] || ULT[step], e, ph);
+    if (frostHeavyStep(step, def)) frostHeavyStart();
     e.timer = bossGap(e, def) * rnd(.88, 1.12);
   }
+}
+
+/* ---------- 0.52.3 重招闸门 ----------
+   用户口述：放招不许流水线——雪崩还没演完就压三角包围，人躲都躲不开。
+   规则：大招 / 连招 / 中招 同一时间只准一个在场，必须等它彻底收场，
+        再空一拍、先出一手小招，才准起下一个重招。小招不受闸门限制。 */
+function frostHeavyStep(step, def) {
+  if (!step) return false;
+  if (typeof step === 'object') return true;                       /* {mid} / {ult} */
+  return (def.rhCombos || []).indexOf(step) >= 0;                  /* 连招 */
+}
+/* 场上还有重招在演？雪崩/迷宫/三角/冰世纪/排队冲撞/肉山/寒潮/连招序列。
+   注意：只认场上的系统对象，不认「BOSS 还在不在」——BOSS 死了招式还在演，
+   这时新一只冰原不许马上开重招（否则又叠成流水线）。 */
+function frostHeavyOn() {
+  if (S.avalanche || S.iceMaze || S.tri || S.iceAge || S.frostQueue || S.flesh || S.iceWave) return true;
+  return S.bosses.some(b => b.bossId === 'frost' && b.comboSeq);
+}
+function frostGateState() {
+  if (!S.frostGate) S.frostGate = { busy: false, rest: 0, needSmall: false };
+  return S.frostGate;
+}
+function frostHeavyReady() {
+  const G = frostGateState();
+  return !frostHeavyOn() && G.rest <= 0 && !G.needSmall;
+}
+function frostHeavyStart() {
+  const G = frostGateState();
+  G.busy = true; G.rest = 0; G.needSmall = false;
+}
+function frostGateTick(dt) {
+  const G = frostGateState();
+  const busy = frostHeavyOn();
+  if (G.busy && !busy) {                 /* 重招刚收场：留一拍，且必须先补一手小招 */
+    G.rest = FROST2.heavyRest;
+    G.needSmall = true;
+  }
+  if (!busy && G.rest > 0) G.rest = Math.max(0, G.rest - dt);
+  G.busy = busy;
+}
+/* 闸门关着时的小招暖场：不位移、不召分身，免得把三角/排队阵型演坏 */
+const FROST_SAFE_SMALL = ['iceWall', 'frostPrison', 'iceSpikes'];
+function frostSmall(e, def, ph, waitingHeavy) {
+  const G = frostGateState();
+  G.needSmall = false;                   /* 补了这一手，收场那一拍就算过了 */
+  let pool = def.moves || ['ring'];
+  if (S.tri || S.frostQueue || S.iceAge) pool = pool.filter(m => FROST_SAFE_SMALL.indexOf(m) >= 0);
+  if (!pool.length) pool = ['iceWall'];
+  const mv = pool[(e.fsmall = (e.fsmall || 0) + 1) % pool.length];
+  castMove(mv, ATK[mv] || ULT[mv], e, ph);
+  e.timer = bossGap(e, def) * (waitingHeavy ? FROST2.heavySmallGap : .6);
 }
 function frostBuild(e, ph) {
   const def = e.def || BOSSES.frost;
@@ -4873,6 +4940,7 @@ function frostRainShot(x, y, ang, spd, dmg) {
 }
 
 function updateFrostSys(dt) {
+  frostGateTick(dt);              /* 0.52.3 重招闸门：收场检测/留一拍 */
   updateFrostMirror(dt);
   updateFrostClones(dt);
   updateFrostQueue(dt);
@@ -4947,8 +5015,15 @@ function updateFrostQueue(dt) {
     return;
   }
   if (Q.cur) {
-    const u = Q.cur; u.t -= dt;
+    const u = Q.cur; 
     const who = u.slot === 0 ? e : S.frostClones[u.slot - 1];
+    /* 0.52.3 起冲前摇：先亮一条细冰线预告落点（900 速度不预告等于白给），线亮完才冲 */
+    if (u.wind > 0) {
+      u.wind -= dt;
+      if (who && Math.random() < .35) addPart(who.x, who.y, '#cfeeff', 90, 2.5);
+      if (u.wind > 0) return;
+    }
+    if (u.t > 0) u.t -= dt;
     if (who && u.dur > 0) {
       const p2 = 1 - Math.max(0, u.t) / u.dur;
       who.x = u.x0 + (u.tx - u.x0) * p2;
@@ -4980,7 +5055,7 @@ function updateFrostQueue(dt) {
       const p = S.player;
       const dx = p.x - who.x, dy = p.y - who.y, d = Math.hypot(dx, dy) || 1;
       Q.cur = { slot: slot, t: d / FROST2.queueDashSpd, dur: d / FROST2.queueDashSpd,
-        x0: who.x, y0: who.y, tx: p.x, ty: p.y, hit: false, tileT: 0 };
+        wind: FROST2.queueWind, x0: who.x, y0: who.y, tx: p.x, ty: p.y, hit: false, tileT: 0 };
       addRing(who.x, who.y, '#cfeeff', 10, 460, .3);
       announce('冲锋 ' + Q.i + '/' + Q.order.length, slot === 0 ? '本体来了！' : '分身来了！', '#7fe0ff', false);
       SFX.zap();
@@ -5329,6 +5404,25 @@ function drawFrost2() {
   /* 分身：用 BOSS 本体渲染画出来（长得跟 boss 一样，半透明 + 冰晶描边区分），
      冰镜出身的分身身后立着那面镜子 */
   const fb2 = frostBoss();
+  /* 0.52.3 排队冲撞前摇：细冰线预告这一冲的落点（越接近起冲越亮越粗） */
+  const QC = S.frostQueue;
+  if (QC && QC.cur && QC.cur.wind > 0) {
+    const u = QC.cur;
+    const who = u.slot === 0 ? fb2 : S.frostClones[u.slot - 1];
+    if (who) {
+      const k = 1 - Math.max(0, u.wind) / FROST2.queueWind;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(who.x, who.y);
+      ctx.lineTo(u.tx, u.ty);
+      ctx.strokeStyle = 'rgba(207,238,255,' + (.30 + .55 * k).toFixed(2) + ')';
+      ctx.lineWidth = 2 + 7 * k;
+      ctx.setLineDash([18, 10]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  }
   for (const c of S.frostClones) {
     const fade = c.ttl < 60 ? Math.min(1, c.ttl / .8) : 1;
     if (fb2) {
@@ -11900,6 +11994,12 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.3', d: '11-08', t: '冰原：重招不再流水线 + 冲撞提速', items: [
+    '重招闸门：大招/连招/中招同一时间只准一个在场，必须等它彻底演完（雪崩压完、迷宫拆完、三角打完、冰世纪落地）才准起下一个',
+    '重招收场后先空一拍、补一手小招，再起下一个重招——不会再出现「雪崩还没躲完三角包围就合围」',
+    '重招占场期间只出小招暖场；三角/排队冲撞这种阵型招期间只用不位移、不召分身的小招，阵型不会被演坏',
+    '排队冲撞提速：680 → 900（对齐荒原巨兽冲撞），起冲前加 0.3 秒细冰线预告落点，快了但看得见',
+  ] },
   { v: '0.52.2', d: '11-08', t: '冰世纪天降三体 + 排队冲撞重做', items: [
     '冰世纪：升空的现在是三个 boss（本体居中 + 两分身各占 1/6、5/6），各自施放自己那 1/3 洲的招，结束一起落回场内淡出',
     '排队冲撞重做：开场收银台排队只是站位——之后连续轮流冲，每次起冲锁定玩家当前位置，冲程=玩家与该体的实际距离（不设上限）',
