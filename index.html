@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.52.4
+   幸存者 · 极简版  v0.52.5
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -4231,14 +4231,72 @@ function ebulletEnd(b) {
   }
 }
 
-/* 扇形弹缝隙分裂（0.27.0）：弹间缝随距离拉大，宽到能塞下 3 个玩家（3×直径）
-   就在缝正中补一发，缝一分为二；最多裂 2 代（再裂最小缝会小于一个身位），
-   远处的密度永远压在「能躲」的线上 */
+/* =========================================================
+   扇弹统一规则（0.52.5，用户口述：所有 BOSS 扇弹初始间隔太小，
+   近距离根本站不下一个人，必中）
+   ---------------------------------------------------------
+   ① 近处必须留得下人：nearR 处相邻两发的空隙 ≥ gapNear 个玩家直径
+      → 角步长有下限（约 0.24 rad），挤了就先把扇面拉宽
+   ② 扇面拉到 arcMax 还挤 → 减发数（宁少发，也不糊成一堵墙）
+   ③ 远处空隙涨到 splitGap 个玩家 → 缝里自动补一发（fanSplit），
+      密度永远压在「能躲」这条线上
+   所有数值都在 FAN 表；BOSS 调试台可实时改。
+   ========================================================= */
+const FAN = {
+  nearR: 150,      // 近距离基准（px）：扇弹在这个距离必须留得下人
+  gapNear: 1.5,    // 该距离上的最小空隙（× 玩家直径 28px = 42px，两侧各留 7px 容错）
+  splitGap: 3,     // 空隙涨到几倍玩家直径就分裂补弹
+  splitGen: 2,     // 最多裂几代（再裂最小缝会小于一个身位）
+  arcMax: 2.0,     // 扇面总张角上限（rad，约 115°）
+};
+/* FAN 可调项：调试台「全局」页三根滑杆实时改（存本机 sv_fan，恢复默认删该键） */
+const FAN_TUNE_KEYS = ['gapNear', 'splitGap', 'nearR'];
+const FAN_DEF = {};
+FAN_TUNE_KEYS.forEach(k => { FAN_DEF[k] = FAN[k]; });
+try {
+  const d = JSON.parse(localStorage.getItem('sv_fan') || 'null');
+  if (d) FAN_TUNE_KEYS.forEach(k => { if (typeof d[k] === 'number' && d[k] > 0) FAN[k] = d[k]; });
+} catch (e) { }
+function fanTuneSave() {
+  const o = {};
+  FAN_TUNE_KEYS.forEach(k => { o[k] = FAN[k]; });
+  try { localStorage.setItem('sv_fan', JSON.stringify(o)); } catch (e) { }
+}
+function fanTuneReset() {
+  FAN_TUNE_KEYS.forEach(k => { FAN[k] = FAN_DEF[k]; });
+  try { localStorage.removeItem('sv_fan'); } catch (e) { }
+}
+/* 统一发射：n=发数，arc=期望总张角（rad），opt 同 shootEnemyBullet；
+   opt.color 可传函数 i => 颜色（火焰扇那种隔一发换色的） */
+function fanShot(e, ph, n, arc, spd, dmg, opt) {
+  const o = opt || {};
+  const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
+  const minStep = FAN.gapNear * S.player.r * 2 / FAN.nearR;   /* 角步长下限 */
+  let step = n > 1 ? arc / (n - 1) : 0;
+  let cnt = n;
+  if (step < minStep) {
+    step = minStep;
+    if (step * (n - 1) > FAN.arcMax) cnt = Math.max(1, Math.floor(FAN.arcMax / step) + 1);  /* 张角到顶 → 减发数 */
+  }
+  const out = [];
+  for (let i = 0; i < cnt; i++) {
+    const oo = typeof o.color === 'function'
+      ? Object.assign({}, o, { color: o.color(i) }) : o;
+    const b = shootEnemyBullet(e, S.player, base + (i - (cnt - 1) / 2) * step, spd, dmg, oo);
+    if (b) {
+      /* 每发都带扇标：有右邻居的记角步长（可裂），扇缘最后一发 da=0（不外扩） */
+      b.fan = { da: i < cnt - 1 ? step : 0, gen: 0 };
+      out.push(b);
+    }
+  }
+  return out;
+}
+/* 扇形弹缝隙分裂：缝宽到 splitGap 个玩家就在正中补一发，缝一分为二 */
 function fanSplit(b) {
-  if (!b.fan || b.fan.da <= 0 || b.fan.gen >= 2) return null;
+  if (!b.fan || b.fan.da <= 0 || b.fan.gen >= FAN.splitGen) return null;
   const age = S.t - b.born;
   const spd = Math.hypot(b.vx, b.vy) || 1;
-  if (spd * age * b.fan.da < S.player.r * 6) return null;
+  if (spd * age * b.fan.da < S.player.r * 2 * FAN.splitGap) return null;
   const nda = b.fan.da * .5;
   const nb = shootEnemyBullet(b, S.player, b.ang0 + nda, spd, b.dmg,
     { color: b.color, kind: b.kind, r: b.r, life: Math.max(.5, b.life), off: 0 });
@@ -5008,11 +5066,8 @@ function updateFrostClones(dt) {
       c.gunT -= dt;
       if (c.gunT <= 0) {
         c.gunT = FROST2.mirrorGap;
-        const base = Math.atan2(S.player.y - c.y, S.player.x - c.x);
-        for (let k = -2; k <= 2; k++) {
-          shootEnemyBullet(c, S.player, base + k * .2, 250, 9 * (c.dmgMul || .5),
-            { color: '#cfeeff', kind: 'ice', r: 6, life: 2.4, ox: c.x, oy: c.y, frostAdd: 10 });
-        }
+        fanShot(c, 1, 5, .8, 250, 9 * (c.dmgMul || .5),
+          { color: '#cfeeff', kind: 'ice', r: 6, life: 2.4, ox: c.x, oy: c.y, frostAdd: 10 });
       }
     }
   }
@@ -5154,11 +5209,8 @@ function updateTriSiege(dt) {
     T.fanT = FROST2.triFanCd;
     /* 0.52.4 用户：三个头不许同时发散弹——每次只挑一个头射（三面一起来没法躲） */
     const u = units[Math.floor(Math.random() * units.length)];
-    const base = Math.atan2(S.player.y - u.y, S.player.x - u.x);
-    for (let k = -2; k <= 2; k++) {
-      shootEnemyBullet(u, S.player, base + k * .17, 240, 10,
-        { color: '#cfeeff', kind: 'ice', r: 6, life: 2.2, ox: u.x, oy: u.y, frostAdd: 10 });
-    }
+    fanShot(u, 2, 5, .68, 240, 10,
+      { color: '#cfeeff', kind: 'ice', r: 6, life: 2.2, ox: u.x, oy: u.y, frostAdd: 10 });
   }
   if (T.laserT <= 0 && units.length) {
     T.laserT = FROST2.triLaserCd;
@@ -5348,11 +5400,8 @@ function updateFleshWall(dt) {
   if (F.sprayT <= 0) {
     F.sprayT = FROST2.fleshSprayCd;
     for (const u of [e].concat(F.clones)) {
-      const aim = Math.atan2(p.y - u.y, p.x - u.x);
-      for (let k = -1; k <= 1; k++) {
-        shootEnemyBullet(u, p, aim + k * .16, 300, 11,
-          { color: '#cfeeff', kind: 'ice', r: 7, life: 3, ox: u.x, oy: u.y, frostAdd: 10 });
-      }
+      fanShot(u, 2, 3, .32, 300, 11,
+        { color: '#cfeeff', kind: 'ice', r: 7, life: 3, ox: u.x, oy: u.y, frostAdd: 10 });
     }
     SFX.zap();
   }
@@ -5796,14 +5845,8 @@ const ATK = {
      飞远后缝被拉大，缝宽到能塞下 3 个玩家就在缝正中自动补弹（fanSplit），
      一代一代裂下去，远处的密度永远压在「能躲」的线上 */
   fan(e, ph) {
-    const n = 3 + (ph - 1);
-    const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
-    const sep = .78 / Math.max(1, n - 1);
-    for (let i = 0; i < n; i++) {
-      const bl = shootEnemyBullet(e, S.player, base + (i - (n - 1) / 2) * sep,
-        285 * phMul(ph), 11 + ph * 2, { color: e.color, r: 7 });
-      if (bl) bl.fan = { da: i < n - 1 ? sep : 0, gen: 0 };   /* 扇缘最后一发没有邻缝，不外扩 */
-    }
+    /* 0.52.5：走统一扇弹规则——近处留得下人，远处靠缝隙分裂补密度 */
+    fanShot(e, ph, 3 + (ph - 1), .78, 285 * phMul(ph), 11 + ph * 2, { color: e.color, r: 7 });
     SFX.zap();
   },
 
@@ -5830,13 +5873,7 @@ const ATK = {
 
   /* 扩射弹：大扇面慢速弹，飞远后靠缝隙分裂自动加密（够缝才补，永远可躲） */
   fanWide(e, ph) {
-    const n = 5, sep = 1.15 / (n - 1);
-    const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
-    for (let i = 0; i < n; i++) {
-      const bl = shootEnemyBullet(e, S.player, base + (i - 2) * sep, 195, 10 + ph,
-        { color: e.color, r: 8, life: 3.4 });
-      if (bl) bl.fan = { da: i < n - 1 ? sep : 0, gen: 0 };
-    }
+    fanShot(e, ph, 5, 1.15, 195, 10 + ph, { color: e.color, r: 8, life: 3.4 });
     SFX.zap();
   },
 
@@ -6011,11 +6048,8 @@ const ATK = {
   fireTrail(e, ph) {
     addHazard('fire', e.x, e.y, { r: 54, dps: 20, color: '#ff7a3d', life: 3.6, warm: .1 });
     const n = 6 + (ph - 1) * 2;
-    const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
-    for (let i = 0; i < n; i++) {
-      shootEnemyBullet(e, S.player, base + (i - (n - 1) / 2) * .16, 340, 10,
-        { color: '#ffb36b', kind: 'fire', r: 7, life: 1.4 });
-    }
+    fanShot(e, ph, n, .16 * (n - 1), 340, 10,
+      { color: '#ffb36b', kind: 'fire', r: 7, life: 1.4 });
   },
 
   /* --- 正弦火焰弹：左右摆着飞过来（弹色跟 BOSS 本体走，虚空系复用也和谐） --- */
@@ -6029,11 +6063,8 @@ const ATK = {
 
   fireFan(e, ph) {
     const n = 7 + (ph - 1) * 3;
-    const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
-    for (let i = 0; i < n; i++) {
-      shootEnemyBullet(e, S.player, base + (i - (n - 1) / 2) * .13, 330, 10,
-        { color: i % 2 ? '#ff7a3d' : '#ffd24a', kind: 'fire', r: 8, life: 2.0, gravity: 200 });
-    }
+    fanShot(e, ph, n, .13 * (n - 1), 330, 10,
+      { color: i => (i % 2 ? '#ff7a3d' : '#ffd24a'), kind: 'fire', r: 8, life: 2.0, gravity: 200 });
   },
 
   ringFire(e, ph) {
@@ -6059,11 +6090,8 @@ const ATK = {
   /* 冰扇：扇面冰弹，命中积霜 +18 */
   iceFan(e, ph) {
     const n = 6 + (ph - 1) * 3;
-    const base = Math.atan2(S.player.y - e.y, S.player.x - e.x);
-    for (let i = 0; i < n; i++) {
-      shootEnemyBullet(e, S.player, base + (i - (n - 1) / 2) * .19, 300, 11,
-        { color: '#7fe0ff', kind: 'ice', r: 7, life: 2.6, frostAdd: 18 });
-    }
+    fanShot(e, ph, n, .19 * (n - 1), 300, 11,
+      { color: '#7fe0ff', kind: 'ice', r: 7, life: 2.6, frostAdd: 18 });
   },
 
   /* 冰锥天落（rocks 换皮，不碰公共 rocks）：落点预警后锥刺落下，落点留 2s 冰面 */
@@ -12019,6 +12047,13 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.5', d: '11-08', t: '所有 BOSS 扇弹留缝：近处站得下人，远处才分裂', items: [
+    '扇形弹统一规则（FAN 表）：在「近距离基准」150px 处，相邻两发的空隙至少 1.25 个玩家身位（35px）——以前火焰扇只有 19px，贴脸放等于必中',
+    '挤了先拉宽扇面（最多 115°），拉到头就减发数：宁少发几颗，也不糊成一堵墙',
+    '飞到远处空隙涨到 3 个玩家身位时，自动在缝正中补一发（缝一分为二，最多补两代）——近处能钻，远处不空',
+    '改造覆盖：通用扇弹 / 扩射弹 / 炎兽火焰扇 / 炎兽火痕扇 / 冰原冰扇 / 三角包围扇弹 / 肉山三喷口 / 冰镜分身炮',
+    '调试台「全局」页新增「扇弹留缝」三根滑杆：近处最小缝 / 远处分裂阈值 / 近距离基准（存本机）',
+  ] },
   { v: '0.52.4', d: '11-08', t: '冰原：冲撞催命 + 喷射减半 + 三角留活路', items: [
     '排队冲撞不再磨叽：两次冲撞的等待 0.95→0.40 秒（撞完马上换下一个），撞的时候不再夹小招——这一招就是纯轮流撞你',
     '排队冲撞的「等待时间」和「冲刺速度」搬进 BOSS 调试台滑杆（冰原那页），随手就能调；重招节奏两根也一起上台',
@@ -13205,6 +13240,7 @@ function devVal(tag) {
   if (p[0] === 'dev') return DEV[p[1]];
   if (p[0] === 'btr') return BURROW_TUNE[p[1]];   /* 0.51.1 炎兽游钻手感 */
   if (p[0] === 'fst') return FROST2[p[1]];        /* 0.52.4 冰原手感 */
+  if (p[0] === 'fan') return FAN[p[1]];           /* 0.52.5 扇弹留缝 */
   if (p[0] === 'beha') {
     const b = BEHA[DEV_TAB];
     return (b && b[p[1]] !== undefined) ? b[p[1]] : devDefVal(p[1]);
@@ -13221,6 +13257,7 @@ function devSet(tag, v) {
   if (p[0] === 'dev') DEV[p[1]] = v;
   else if (p[0] === 'btr') { BURROW_TUNE[p[1]] = v; burrowSave(); }   /* 0.51.1 游钻手感存本机 */
   else if (p[0] === 'fst') { FROST2[p[1]] = v; frostTuneSave(); }     /* 0.52.4 冰原手感存本机 */
+  else if (p[0] === 'fan') { FAN[p[1]] = v; fanTuneSave(); }          /* 0.52.5 扇弹留缝存本机 */
   else if (p[0] === 'beha') { (BEHA[DEV_TAB] = BEHA[DEV_TAB] || {})[p[1]] = v; }
   else if (p[0] === 'tune') { tuneOf(p[1])[p[2]] = v; }
   saveDev();
@@ -13232,6 +13269,8 @@ function devFmt(tag, v) {
   if (tag === 'btr:chargeT') return v.toFixed(2) + 's';
   if (tag === 'btr:spd' || tag === 'fst:queueDashSpd') return Math.round(v) + 'px/s';
   if (tag === 'fst:queueGap' || tag === 'fst:queueWind' || tag === 'fst:heavyRest' || tag === 'fst:heavySmallGap') return v.toFixed(2) + 's';
+  if (tag === 'fan:gapNear' || tag === 'fan:splitGap') return v.toFixed(2) + ' 个玩家';
+  if (tag === 'fan:nearR') return Math.round(v) + 'px';
   if (tag === 'beha:restMode') return ['自动', '喘息', '压近', '拉扯', '弧步', '拉开'][Math.round(v)] || '自动';
   if (tag === 'beha:spd' || tag === 'beha:chain' || tag === 'beha:mood') return Math.round(v * 100) + '%';
   if (tag.indexOf('beha:') === 0) return v.toFixed(2) + 's';
@@ -13274,6 +13313,17 @@ function devHTML() {
     h += '<div class="setrow"><span>全部恢复默认</span>' +
       '<button class="filbtn" data-rst="all">恢复 1.00×</button></div>' +
       '<div class="avtip">倍率是「乘法」：前摇 0.70× 让所有招更好读，伤害 1.50× 让所有招更疼</div>';
+    /* 0.52.5 扇弹留缝：所有 BOSS 的扇形弹共用这一条规则 */
+    h += '<h3>扇弹留缝 <time>所有 BOSS · 扇形弹共用</time></h3>' +
+      '<div class="avtip">近处必须站得下人：在「近距离基准」那个距离上，相邻两发的空隙至少这么宽。' +
+      '挤了会先把扇面拉宽，拉到头就减发数；飞到远处空隙够宽会自动分裂补一发。</div>';
+    [['gapNear', '近处最小缝', .8, 3, .05, 100],
+     ['splitGap', '远处分裂阈值', 2, 6, .1, 100],
+     ['nearR', '近距离基准', 60, 320, 10, 1]].forEach(it => {
+      h += devRow('fan:' + it[0], it[1], FAN[it[0]], it[2], it[3], it[4], it[5]);
+    });
+    h += '<div class="setrow"><span>扇弹恢复默认</span>' +
+      '<button class="filbtn" data-rst="fan">恢复</button></div>';
     return h;
   }
 
@@ -13378,6 +13428,8 @@ function wireDevBody() {
       devMovesOf(DEV_TAB).forEach(mv => { delete TUNE[mv]; });
     } else if (what === 'frost') {
       frostTuneReset();
+    } else if (what === 'fan') {
+      fanTuneReset();
     }
     saveDev();
     body.innerHTML = devHTML();
