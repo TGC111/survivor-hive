@@ -310,7 +310,7 @@
 
 <script>
 /* =========================================================
-   幸存者 · 极简版  v0.52.0
+   幸存者 · 极简版  v0.52.1
    新增：BGM 重做——七关七主题（16 小节 / 128 步），战况分四层加开声部、
      低通逐级打开（不换曲不换速），中招大招自动 duck；
      鼓点改短促、冰原虚空主界面零鼓
@@ -4884,13 +4884,14 @@ function updateFrostSys(dt) {
   updateFrostPickups(dt);
 }
 
-/* 冰镜：成形后分身走出 */
+/* 冰镜：成形后分身走出（分身继承本体渲染，镜子立在场上一 直到分身消失） */
 function updateFrostMirror(dt) {
   if (!S.frostMirror) return;
   const M = S.frostMirror;
   M.t -= dt;
   if (M.t <= 0) {
-    S.frostClones.push({ x: M.x, y: M.y, r: 26, ttl: FROST2.mirrorTtl, gun: true, gunT: .4, dmgMul: FROST2.mirrorDmgMul });
+    S.frostClones.push({ x: M.x, y: M.y, r: 26, ttl: FROST2.mirrorTtl, gun: true, gunT: .4,
+      dmgMul: FROST2.mirrorDmgMul, mx: M.x, my: M.y, mirror: true });   /* 镜子跟随分身同寿 */
     addRing(M.x, M.y, '#e8fbff', 12, 520, .5);
     for (let k = 0; k < 12; k++) addPart(M.x, M.y, '#e8fbff', rnd(120, 300), 3);
     S.frostMirror = null;
@@ -5279,14 +5280,38 @@ function updateFrostPickups(dt) {
 
 /* 0.52.0 冰原系统绘制（挂在主渲染的 props 段之后） */
 function drawFrost2() {
-  /* 分身：半透明水晶体 */
+  /* 分身：用 BOSS 本体渲染画出来（长得跟 boss 一样，半透明 + 冰晶描边区分），
+     冰镜出身的分身身后立着那面镜子 */
+  const fb2 = frostBoss();
   for (const c of S.frostClones) {
-    const fade = c.ttl < 60 ? Math.min(1, c.ttl / .8) : (.62 + .12 * Math.sin(S.t * 5));
-    ctx.globalAlpha = fade;
-    ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, RAD);
-    ctx.fillStyle = 'rgba(127,224,255,.4)'; ctx.fill();
-    ctx.strokeStyle = 'rgba(235,250,255,.85)'; ctx.lineWidth = 2.5; ctx.stroke();
+    const fade = c.ttl < 60 ? Math.min(1, c.ttl / .8) : 1;
+    if (fb2) {
+      const ghost = Object.create(fb2);   /* 继承 def/look/bossId/color 全套，渲染与本体同款 */
+      ghost.x = c.x; ghost.y = c.y; ghost.r = fb2.r * .92;
+      ghost.phase = 1; ghost.flash = 0; ghost.rest = 0; ghost.spd = 0;
+      ghost.sqT = 0; ghost.winding = 0; ghost.charging = 0; ghost.gone = false;
+      ghost.stepPh = S.t * 6; ghost.face = (S.player.x < c.x) ? -1 : 1;
+      ctx.save();
+      ctx.globalAlpha = .62 * fade;       /* 半透明=分身质感 */
+      try { drawBossShape(ghost); } catch (err) { /* 渲染兜底：画不成就退回冰晶圆 */ }
+      ctx.restore();
+    }
+    ctx.globalAlpha = fade * .85;
+    ctx.beginPath(); ctx.arc(c.x, c.y, c.r * (fb2 ? 1.14 : 1), 0, RAD);
+    ctx.strokeStyle = 'rgba(190,242,255,.75)'; ctx.lineWidth = 2;
+    ctx.setLineDash([7, 6]); ctx.stroke(); ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+    /* 冰镜出身的分身：身后立着那面冰镜（银框 + 镜面） */
+    if (c.mirror) {
+      ctx.save();
+      ctx.translate(c.mx, c.my);
+      ctx.beginPath(); ctx.ellipse(0, 0, 26, 44, 0, 0, RAD);
+      ctx.fillStyle = 'rgba(200,240,255,.30)'; ctx.fill();
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(220,245,255,.9)'; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(0, 0, 16, 32, 0, 0, RAD);
+      ctx.fillStyle = 'rgba(235,252,255,.35)'; ctx.fill();
+      ctx.restore();
+    }
   }
   /* 冰镜 */
   if (S.frostMirror) {
@@ -5296,9 +5321,17 @@ function drawFrost2() {
     ctx.beginPath(); ctx.ellipse(M.x, M.y, 34, 52, 0, 0, RAD); ctx.fill();
     ctx.strokeStyle = '#e8fbff'; ctx.lineWidth = 3; ctx.stroke();
     ctx.globalAlpha = 1;
-    if (k > .6) {   /* 分身探出 */
-      ctx.beginPath(); ctx.arc(M.x, M.y + 20 * (k - .6) / .4, 22, 0, RAD);
-      ctx.fillStyle = 'rgba(127,224,255,.5)'; ctx.fill();
+    /* 镜面里的倒影：BOSS 缩影越照越清晰（照镜子实感） */
+    const fbm = frostBoss();
+    if (fbm && k > .25) {
+      const ghost = Object.create(fbm);
+      ghost.x = M.x; ghost.y = M.y + 6; ghost.r = fbm.r * .38 * k;
+      ghost.phase = 1; ghost.flash = 0; ghost.rest = 0; ghost.spd = 0;
+      ghost.sqT = 0; ghost.winding = 0; ghost.charging = 0; ghost.gone = false;
+      ctx.save();
+      ctx.globalAlpha = Math.min(.85, k * 1.2);
+      try { drawBossShape(ghost); } catch (err) { }
+      ctx.restore();
     }
   }
   /* 雪崩：死亡带 + 庇护圈 */
@@ -11819,6 +11852,10 @@ function setMenuMode(on) {
    更新日志（发布新版本时在最上面加一条，玩家端首次打开自动弹）
    ========================================================= */
 const CHANGELOG = [
+  { v: '0.52.1', d: '11-08', t: '冰镜分身渲染修正：分身长BOSS样', items: [
+    '分身不再是一个冰圈——改用 BOSS 本体渲染（同款水晶造型，半透明+虚线冰晶描边区分）',
+    '镜子立在场上一直到分身消失；照镜阶段镜面里有 BOSS 倒影越照越清晰',
+  ] },
   { v: '0.52.0', d: '11-08', t: '冰原领主二番重做：控制/走位/地图控制', items: [
     '小招×6：冰墙/霜封/冰锥天落/滑步突进/冰凌跃迁照旧 + 冰镜分身新版（照镜走出第二个自己，10秒配合攻击）',
     '连招×2：分身跃迁到处喷射（四体乱闪5轮+环形弹幕）/ 三分身排队冲撞（玩家当收银台，最远先冲，2.66轮末轮本体免冲）',
